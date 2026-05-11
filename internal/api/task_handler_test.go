@@ -13,6 +13,8 @@ import (
 	_ "github.com/mattn/go-sqlite3"
 )
 
+const testToken = "test-token"
+
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	d, err := sql.Open("sqlite3", t.TempDir()+"/test.db")
@@ -31,15 +33,21 @@ func setupRouter(t *testing.T) (*sql.DB, http.Handler) {
 	taskRepo := db.NewTaskRepo(d)
 	gateRepo := db.NewGateRepo(d)
 	agentRepo := db.NewAgentRepo(d)
+	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
 	r := NewRouter(taskRepo, gateRepo, agentRepo, nil)
 	return d, r
 }
 
+func authRequest(method, target, body string) *http.Request {
+	req := httptest.NewRequest(method, target, strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	return req
+}
+
 func TestCreateTask_201(t *testing.T) {
 	_, r := setupRouter(t)
-	body := `{"id":"t001","title":"test task","priority":3}`
-	req := httptest.NewRequest("POST", "/tasks", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks", `{"id":"t001","title":"test task","priority":3}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -56,9 +64,7 @@ func TestCreateTask_201(t *testing.T) {
 
 func TestCreateTask_MissingTitle_400(t *testing.T) {
 	_, r := setupRouter(t)
-	body := `{"id":"t001"}`
-	req := httptest.NewRequest("POST", "/tasks", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks", `{"id":"t001"}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -72,7 +78,7 @@ func TestGetTask_200(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test task", BodyGoal: "goal"})
 
-	req := httptest.NewRequest("GET", "/tasks/t001", nil)
+	req := authRequest("GET", "/tasks/t001", "")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -83,7 +89,7 @@ func TestGetTask_200(t *testing.T) {
 
 func TestGetTask_404(t *testing.T) {
 	_, r := setupRouter(t)
-	req := httptest.NewRequest("GET", "/tasks/nonexistent", nil)
+	req := authRequest("GET", "/tasks/nonexistent", "")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -98,7 +104,7 @@ func TestListTasks_200(t *testing.T) {
 	taskRepo.Create(&models.Task{ID: "t001", Title: "task1"})
 	taskRepo.Create(&models.Task{ID: "t002", Title: "task2"})
 
-	req := httptest.NewRequest("GET", "/tasks", nil)
+	req := authRequest("GET", "/tasks", "")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -118,9 +124,7 @@ func TestClaimTask_200(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
 
-	body := `{"assignee":"worker-a"}`
-	req := httptest.NewRequest("POST", "/tasks/t001/claim", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks/t001/claim", `{"assignee":"worker-a"}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -135,9 +139,7 @@ func TestClaimTask_AlreadyClaimed_409(t *testing.T) {
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
 	taskRepo.ClaimTask("t001", "worker-a")
 
-	body := `{"assignee":"worker-b"}`
-	req := httptest.NewRequest("POST", "/tasks/t001/claim", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks/t001/claim", `{"assignee":"worker-b"}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -152,7 +154,7 @@ func TestStartTask_200(t *testing.T) {
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
 	taskRepo.ClaimTask("t001", "worker-a")
 
-	req := httptest.NewRequest("POST", "/tasks/t001/start", nil)
+	req := authRequest("POST", "/tasks/t001/start", "")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -166,7 +168,7 @@ func TestStartTask_WrongState_409(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
 
-	req := httptest.NewRequest("POST", "/tasks/t001/start", nil)
+	req := authRequest("POST", "/tasks/t001/start", "")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -182,9 +184,7 @@ func TestBlockTask_200(t *testing.T) {
 	taskRepo.ClaimTask("t001", "worker-a")
 	taskRepo.StartTask("t001")
 
-	body := `{"gate_id":"g001","question":"Should we proceed?"}`
-	req := httptest.NewRequest("POST", "/tasks/t001/block", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks/t001/block", `{"gate_id":"g001","question":"Should we proceed?"}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -200,9 +200,7 @@ func TestCompleteTask_200(t *testing.T) {
 	taskRepo.ClaimTask("t001", "worker-a")
 	taskRepo.StartTask("t001")
 
-	body := `{"summary":"all done"}`
-	req := httptest.NewRequest("POST", "/tasks/t001/complete", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks/t001/complete", `{"summary":"all done"}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -216,9 +214,7 @@ func TestFailTask_200(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
 
-	body := `{"reason":"something broke"}`
-	req := httptest.NewRequest("POST", "/tasks/t001/fail", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks/t001/fail", `{"reason":"something broke"}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 
@@ -229,8 +225,8 @@ func TestFailTask_200(t *testing.T) {
 
 func TestUnblockTask_200(t *testing.T) {
 	d, r := setupRouter(t)
-	taskRepo := db.NewTaskRepo(d)
 	gateRepo := db.NewGateRepo(d)
+	taskRepo := db.NewTaskRepo(d)
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
 	taskRepo.ClaimTask("t001", "worker-a")
 	taskRepo.StartTask("t001")
@@ -239,9 +235,7 @@ func TestUnblockTask_200(t *testing.T) {
 	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = 'g001'")
 	gateRepo.AnswerGate("g001", "yes")
 
-	body := `{"gate_id":"g001"}`
-	req := httptest.NewRequest("POST", "/tasks/t001/unblock", strings.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
+	req := authRequest("POST", "/tasks/t001/unblock", `{"gate_id":"g001"}`)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 

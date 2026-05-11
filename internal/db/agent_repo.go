@@ -59,6 +59,24 @@ func (r *AgentRepo) UpdateHeartbeat(name string) error {
 	return nil
 }
 
+func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
+	row := r.db.QueryRow(
+		`SELECT name, port, token, last_heartbeat FROM agents WHERE token = ?`, token,
+	)
+	agent := &models.Agent{}
+	var heartbeat sql.NullString
+	if err := row.Scan(&agent.Name, &agent.Port, &agent.Token, &heartbeat); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("scan agent by token: %w", err)
+	}
+	if heartbeat.Valid {
+		agent.LastHeartbeat = heartbeat.String
+	}
+	return agent, nil
+}
+
 func (r *AgentRepo) ListStale(dur time.Duration) ([]models.Agent, error) {
 	cutoff := time.Now().UTC().Add(-dur).Format(time.RFC3339)
 	rows, err := r.db.Query(
