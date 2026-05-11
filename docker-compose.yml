@@ -1,0 +1,28 @@
+version: '3'
+services:
+  acb:
+    build: .
+    ports:
+      - "8080:8080"
+    env_file: .env
+    volumes:
+      - acb-data:/var/lib/acb
+    depends_on:
+      - redis
+      - rustfs
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+  rustfs:
+    image: rustfs:latest
+    ports:
+      - "8085:8085"
+    volumes:
+      - rustfs-data:/data
+
+volumes:
+  acb-data:
+  rustfs-data:
