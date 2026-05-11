@@ -41,6 +41,7 @@ func (r *AgentRepo) GetByName(name string) (*models.Agent, error) {
 	if heartbeat.Valid {
 		agent.LastHeartbeat = heartbeat.String
 	}
+	agent.Token = ""
 	return agent, nil
 }
 

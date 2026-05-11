@@ -213,6 +213,8 @@ func TestFailTask_200(t *testing.T) {
 	d, r := setupRouter(t)
 	taskRepo := db.NewTaskRepo(d)
 	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.ClaimTask("t001", "worker-a")
+	taskRepo.StartTask("t001")
 
 	req := authRequest("POST", "/tasks/t001/fail", `{"reason":"something broke"}`)
 	w := httptest.NewRecorder()
@@ -220,6 +222,20 @@ func TestFailTask_200(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestFailTask_WrongState_409(t *testing.T) {
+	d, r := setupRouter(t)
+	taskRepo := db.NewTaskRepo(d)
+	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+
+	req := authRequest("POST", "/tasks/t001/fail", `{"reason":"not started"}`)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 409 {
+		t.Errorf("expected 409, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

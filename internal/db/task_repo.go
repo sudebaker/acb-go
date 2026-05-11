@@ -167,17 +167,25 @@ func (r *TaskRepo) BlockTask(id string) error {
 }
 
 func (r *TaskRepo) CompleteTask(id, summary string) error {
-	_, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = ? WHERE id = ? AND status = 'in_progress'", summary, id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = ? WHERE id = ? AND status = 'in_progress'", summary, id)
 	if err != nil {
 		return fmt.Errorf("complete task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("task %s not found or not in_progress", id)
 	}
 	return nil
 }
 
 func (r *TaskRepo) FailTask(id, reason string) error {
-	_, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = ? WHERE id = ?", reason, id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = ? WHERE id = ? AND status = 'in_progress'", reason, id)
 	if err != nil {
 		return fmt.Errorf("fail task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("task %s not found or not in_progress", id)
 	}
 	return nil
 }

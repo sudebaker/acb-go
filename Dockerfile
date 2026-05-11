@@ -6,7 +6,7 @@ RUN go mod download
 COPY . .
 RUN go build -o /acb .
 
-FROM scratch
+FROM alpine:3.19
 COPY --from=builder /acb /acb
 EXPOSE 8080
 ENTRYPOINT ["/acb"]
