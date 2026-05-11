@@ -98,7 +98,10 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Assignee string `json:"assignee"`
 	}
-	json.NewDecoder(r.Body).Decode(&input)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		WriteError(w, 400, "invalid_json", "invalid request body")
+		return
+	}
 	if input.Assignee == "" {
 		WriteError(w, 400, "missing_assignee", "assignee is required")
 		return
@@ -186,7 +189,10 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	h.taskRepo.UpdateStatus(id, "in_progress")
+	if err := h.taskRepo.UpdateStatus(id, "in_progress"); err != nil {
+		WriteError(w, 500, "update_failed", err.Error())
+		return
+	}
 	go h.pub.PublishTaskEvent(acbredis.EventTaskUnblock, id, "")
 
 	task, _ := h.taskRepo.GetByID(id)
@@ -199,7 +205,10 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Summary string `json:"summary"`
 	}
-	json.NewDecoder(r.Body).Decode(&input)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		WriteError(w, 400, "invalid_json", "invalid request body")
+		return
+	}
 
 	if err := h.taskRepo.CompleteTask(id, input.Summary); err != nil {
 		WriteError(w, 409, "complete_failed", err.Error())
@@ -218,10 +227,13 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Reason string `json:"reason"`
 	}
-	json.NewDecoder(r.Body).Decode(&input)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		WriteError(w, 400, "invalid_json", "invalid request body")
+		return
+	}
 
 	if err := h.taskRepo.FailTask(id, input.Reason); err != nil {
-		WriteError(w, 500, "fail_failed", err.Error())
+		WriteError(w, 409, "fail_failed", err.Error())
 		return
 	}
 

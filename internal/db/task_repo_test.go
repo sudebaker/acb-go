@@ -135,6 +135,8 @@ func TestFailTask(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
 	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.ClaimTask("t001", "worker-a")
+	repo.StartTask("t001")
 
 	if err := repo.FailTask("t001", "something broke"); err != nil {
 		t.Fatal(err)
@@ -142,6 +144,16 @@ func TestFailTask(t *testing.T) {
 	task, _ := repo.GetByID("t001")
 	if task.Status != "failed" {
 		t.Errorf("got status %q", task.Status)
+	}
+}
+
+func TestFailTask_WrongState(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+	repo.Create(&models.Task{ID: "t001", Title: "test"})
+
+	if err := repo.FailTask("t001", "should fail"); err == nil {
+		t.Error("expected error failing pending task")
 	}
 }
 

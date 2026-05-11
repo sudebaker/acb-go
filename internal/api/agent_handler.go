@@ -16,7 +16,10 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	var input struct {
 		Name string `json:"name"`
 	}
-	json.NewDecoder(r.Body).Decode(&input)
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		WriteError(w, 400, "invalid_json", "invalid request body")
+		return
+	}
 	if input.Name == "" {
 		input.Name = r.Header.Get("X-Agent-Name")
 	}
