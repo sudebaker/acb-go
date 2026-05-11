@@ -1,6 +1,6 @@
 module github.com/amphora/acb
 
-go 1.24
+go 1.25.0
 
 require (
 	github.com/go-chi/chi/v5 v5.2.5
@@ -11,4 +11,5 @@ require (
 require (
 	github.com/cespare/xxhash/v2 v2.3.0 // indirect
 	go.uber.org/atomic v1.11.0 // indirect
+	golang.org/x/time v0.15.0 // indirect
 )
