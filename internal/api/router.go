@@ -33,5 +33,11 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 		r.Post("/tasks/{id}/fail", h.FailTask)
 	}
 
+	if agentRepo != nil {
+		ah := &AgentHandler{agentRepo: agentRepo}
+		r.Post("/agents/heartbeat", ah.Heartbeat)
+		r.Get("/agents/{name}", ah.GetAgent)
+	}
+
 	return r
 }
