@@ -4,11 +4,12 @@ import (
 	"net/http"
 
 	"github.com/amphora/acb/internal/db"
+	acbredis "github.com/amphora/acb/internal/redis"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 )
 
-func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, redisPub interface{}) *chi.Mux {
+func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -21,7 +22,7 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	})
 
 	if taskRepo != nil && gateRepo != nil {
-		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo}
+		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo, pub: pub}
 		r.Post("/tasks", h.CreateTask)
 		r.Get("/tasks", h.ListTasks)
 		r.Get("/tasks/{id}", h.GetTask)

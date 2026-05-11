@@ -6,12 +6,14 @@ import (
 
 	"github.com/amphora/acb/internal/db"
 	"github.com/amphora/acb/internal/models"
+	acbredis "github.com/amphora/acb/internal/redis"
 	"github.com/go-chi/chi/v5"
 )
 
 type TaskHandler struct {
 	taskRepo *db.TaskRepo
 	gateRepo *db.GateRepo
+	pub      *acbredis.Publisher
 }
 
 func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -52,6 +54,8 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "create_failed", err.Error())
 		return
 	}
+
+	go h.pub.PublishTaskEvent(acbredis.EventNewTask, task.ID, task.Assignee)
 
 	WriteJSON(w, 201, task)
 }
@@ -105,6 +109,8 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	go h.pub.PublishTaskEvent(acbredis.EventTaskClaimed, id, input.Assignee)
+
 	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
 }
@@ -116,6 +122,8 @@ func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 409, "start_failed", err.Error())
 		return
 	}
+
+	go h.pub.PublishTaskEvent(acbredis.EventTaskStarted, id, "")
 
 	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
@@ -153,6 +161,8 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	go h.pub.PublishTaskEvent(acbredis.EventTaskBlocked, id, "")
+
 	WriteJSON(w, 200, map[string]string{"status": "blocked", "gate_id": input.GateID})
 }
 
@@ -177,6 +187,7 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.taskRepo.UpdateStatus(id, "in_progress")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskUnblock, id, "")
 
 	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
@@ -195,6 +206,8 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	go h.pub.PublishTaskEvent(acbredis.EventTaskDone, id, "")
+
 	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
 }
@@ -211,6 +224,8 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "fail_failed", err.Error())
 		return
 	}
+
+	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, "")
 
 	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
