@@ -17,6 +17,10 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	r.Use(RequestLogger)
 	r.Use(JSONContentType)
 
+	if agentRepo != nil {
+		r.Use(AuthMiddleware(agentRepo))
+	}
+
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		WriteJSON(w, 200, map[string]string{"status": "ok"})
 	})
