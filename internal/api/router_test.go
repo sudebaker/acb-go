@@ -7,7 +7,7 @@ import (
 )
 
 func TestHealthEndpoint(t *testing.T) {
-	r := NewRouter(nil, nil, nil, nil)
+	r := NewRouter(nil, nil, nil, nil, nil)
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -24,7 +24,7 @@ func TestHealthEndpoint(t *testing.T) {
 }
 
 func TestUnknownRoute_Returns404(t *testing.T) {
-	r := NewRouter(nil, nil, nil, nil)
+	r := NewRouter(nil, nil, nil, nil, nil)
 	req := httptest.NewRequest("GET", "/nonexistent", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
@@ -35,7 +35,7 @@ func TestUnknownRoute_Returns404(t *testing.T) {
 }
 
 func TestContentTypeJSON(t *testing.T) {
-	r := NewRouter(nil, nil, nil, nil)
+	r := NewRouter(nil, nil, nil, nil, nil)
 	req := httptest.NewRequest("GET", "/health", nil)
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)

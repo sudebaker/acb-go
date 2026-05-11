@@ -6,8 +6,17 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/models"
 )
+
+type ConflictError struct {
+	CurrentStatus string
+	Message       string
+}
+
+func (e *ConflictError) Error() string {
+	return e.Message
+}
 
 type TaskRepo struct {
 	db *sql.DB
@@ -68,8 +77,12 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	}
 
 	task.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	json.Unmarshal([]byte(parents), &task.Parents)
-	json.Unmarshal([]byte(artifacts), &task.Artifacts)
+	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
+		return nil, fmt.Errorf("unmarshal parents: %w", err)
+	}
+	if err := json.Unmarshal([]byte(artifacts), &task.Artifacts); err != nil {
+		return nil, fmt.Errorf("unmarshal artifacts: %w", err)
+	}
 
 	if task.Status == "" {
 		task.Status = "pending"
@@ -118,76 +131,178 @@ func (r *TaskRepo) UpdateStatus(id, status string) error {
 	return nil
 }
 
-func (r *TaskRepo) ClaimTask(id, assignee string) error {
-	var currentStatus string
-	err := r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&currentStatus)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("task %s not found", id)
-	}
+func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
+	res, err := r.db.Exec(
+		"UPDATE tasks SET status = 'claimed', assignee = ? WHERE id = ? AND status = 'pending'",
+		assignee, id,
+	)
 	if err != nil {
-		return fmt.Errorf("get task status: %w", err)
-	}
-	if currentStatus != "pending" {
-		return fmt.Errorf("task %s is %s, expected pending", id, currentStatus)
-	}
-
-	_, err = r.db.Exec("UPDATE tasks SET status = 'claimed', assignee = ? WHERE id = ?", assignee, id)
-	return err
-}
-
-func (r *TaskRepo) StartTask(id string) error {
-	var currentStatus string
-	err := r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&currentStatus)
-	if err == sql.ErrNoRows {
-		return fmt.Errorf("task %s not found", id)
-	}
-	if err != nil {
-		return fmt.Errorf("get task status: %w", err)
-	}
-	if currentStatus != "claimed" {
-		return fmt.Errorf("task %s is %s, expected claimed", id, currentStatus)
-	}
-
-	_, err = r.db.Exec("UPDATE tasks SET status = 'in_progress' WHERE id = ?", id)
-	return err
-}
-
-func (r *TaskRepo) BlockTask(id string) error {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status IN ('in_progress', 'claimed')", id)
-	if err != nil {
-		return fmt.Errorf("block task: %w", err)
+		return nil, fmt.Errorf("claim task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
 		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
-		return fmt.Errorf("task %s is %s, expected in_progress or claimed", id, current)
+		if current == "" {
+			return nil, fmt.Errorf("task %s not found", id)
+		}
+		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in pending status"}
 	}
-	return nil
+
+	return &models.Task{ID: id, Status: "claimed", Assignee: assignee}, nil
 }
 
-func (r *TaskRepo) CompleteTask(id, summary string) error {
+func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
+	res, err := r.db.Exec(
+		"UPDATE tasks SET status = 'in_progress' WHERE id = ? AND status = 'claimed'",
+		id,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("start task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		var current string
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		if current == "" {
+			return nil, fmt.Errorf("task %s not found", id)
+		}
+		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in claimed status"}
+	}
+
+	return &models.Task{ID: id, Status: "in_progress"}, nil
+}
+
+func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
+	res, err := r.db.Exec("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status IN ('in_progress', 'claimed')", id)
+	if err != nil {
+		return nil, fmt.Errorf("block task: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		var current string
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress or claimed status"}
+	}
+	return &models.Task{ID: id, Status: "blocked"}, nil
+}
+
+func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
 	res, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = ? WHERE id = ? AND status = 'in_progress'", summary, id)
 	if err != nil {
-		return fmt.Errorf("complete task: %w", err)
+		return nil, fmt.Errorf("complete task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("task %s not found or not in_progress", id)
+		var current string
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		if current == "" {
+			return nil, fmt.Errorf("task %s not found", id)
+		}
+		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress status"}
 	}
-	return nil
+	return &models.Task{ID: id, Status: "completed", Summary: summary}, nil
 }
 
-func (r *TaskRepo) FailTask(id, reason string) error {
+func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
 	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = ? WHERE id = ? AND status = 'in_progress'", reason, id)
 	if err != nil {
-		return fmt.Errorf("fail task: %w", err)
+		return nil, fmt.Errorf("fail task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("task %s not found or not in_progress", id)
+		var current string
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		if current == "" {
+			return nil, fmt.Errorf("task %s not found", id)
+		}
+		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress status"}
 	}
-	return nil
+	return &models.Task{ID: id, Status: "failed", Summary: reason}, nil
+}
+
+func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
+	var raw string
+	err := r.db.QueryRow("SELECT artifacts_json FROM tasks WHERE id = ?", id).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return "", fmt.Errorf("task %s not found", id)
+	}
+	if err != nil {
+		return "", fmt.Errorf("get artifacts json: %w", err)
+	}
+	return raw, nil
+}
+
+func (r *TaskRepo) setArtifactsJSON(id, raw string) error {
+	_, err := r.db.Exec("UPDATE tasks SET artifacts_json = ? WHERE id = ?", raw, id)
+	return err
+}
+
+func (r *TaskRepo) AddArtifact(taskID string, artifact models.Artifact) error {
+	raw, err := r.getArtifactsJSON(taskID)
+	if err != nil {
+		return err
+	}
+
+	var list []models.Artifact
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &list); err != nil {
+			return fmt.Errorf("unmarshal artifacts: %w", err)
+		}
+	}
+
+	list = append(list, artifact)
+	data, err := json.Marshal(list)
+	if err != nil {
+		return fmt.Errorf("marshal artifacts: %w", err)
+	}
+
+	return r.setArtifactsJSON(taskID, string(data))
+}
+
+func (r *TaskRepo) RemoveArtifact(taskID string, key string) error {
+	raw, err := r.getArtifactsJSON(taskID)
+	if err != nil {
+		return err
+	}
+
+	var list []models.Artifact
+	if raw != "" {
+		if err := json.Unmarshal([]byte(raw), &list); err != nil {
+			return fmt.Errorf("unmarshal artifacts: %w", err)
+		}
+	}
+
+	var filtered []models.Artifact
+	for _, a := range list {
+		if a.Key != key {
+			filtered = append(filtered, a)
+		}
+	}
+
+	data, err := json.Marshal(filtered)
+	if err != nil {
+		return fmt.Errorf("marshal artifacts: %w", err)
+	}
+
+	return r.setArtifactsJSON(taskID, string(data))
+}
+
+func (r *TaskRepo) GetArtifacts(taskID string) ([]models.Artifact, error) {
+	raw, err := r.getArtifactsJSON(taskID)
+	if err != nil {
+		return nil, err
+	}
+
+	if raw == "" || raw == "[]" {
+		return []models.Artifact{}, nil
+	}
+
+	var list []models.Artifact
+	if err := json.Unmarshal([]byte(raw), &list); err != nil {
+		return nil, fmt.Errorf("unmarshal artifacts: %w", err)
+	}
+	return list, nil
 }
 
 func (r *TaskRepo) GetPendingByAgent(agent string) ([]models.Task, error) {

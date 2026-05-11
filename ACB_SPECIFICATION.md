@@ -112,3 +112,51 @@ A pesar de existir un sistema de archivos compartido (`/opt/data`), se mantiene 
 - **Identidad**: Todos los agentes operan bajo `uid 1000` para asegurar la propiedad de archivos en los volúmenes montados.
 - **Autenticación**: Uso de tokens Bearer únicos por agente, validados en cada petición al ACB.
 - **Aislamiento**: El ACB no modifica el MCP Orchestrator; se comunica con él mediante el flujo estándar de herramientas.
+
+---
+
+## 7. Configuración de SQLite
+
+- **WAL mode**: `PRAGMA journal_mode=WAL` — permite lecturas concurrentes sin bloqueos de escritura.
+- **Busy timeout**: `PRAGMA busy_timeout=5000` — espera hasta 5s antes de abortar por bloqueo.
+- **Single-writer**: `SetMaxOpenConns(1)` — SQLite no soporta escritura concurrente segura.
+- **Índice**: `idx_agents_last_heartbeat` en `agents(last_heartbeat)` para consultas eficientes de agentes inactivos.
+
+---
+
+## 8. Rate Limiting
+
+El endpoint `POST /agents/heartbeat` está limitado a **10 peticiones por minuto por agente**.
+
+Implementado con `golang.org/x/time/rate`:
+- **Rate**: `rate.Every(6 * time.Second)` (1 cada 6s)
+- **Burst**: 1
+- **Aislamiento**: cada agente tiene su propio limitador
+
+Respuesta `429 Too Many Requests`:
+```json
+{"error": "rate_limited", "message": "too many heartbeats"}
+```
+
+---
+
+## 9. Optimización N+1
+
+Todos los métodos de transición de estado (`ClaimTask`, `StartTask`, `BlockTask`, `CompleteTask`, `FailTask`) retornan `(*models.Task, error)` con un objeto mínimo construido en memoria después del UPDATE, eliminando la necesidad de un SELECT posterior para obtener el estado actualizado. Esto reduce las queries de N+1 a 1 por transición.
+
+---
+
+## 10. Seguridad — Post-Audit
+
+Hallazgos críticos corregidos tras el security audit:
+
+| Hallazgo | Severidad | Corrección |
+|----------|-----------|------------|
+| `CompleteTask` sin verificar RowsAffected | CRÍTICA | Se agregó verificación `RowsAffected() == 0` → error |
+| `FailTask` permitía fallar desde cualquier estado | CRÍTICA | Se agregó `AND status = 'in_progress'` |
+| `ClaimTask` ignoraba errores JSON | MEDIA | Se agregó validación `Decode` con error 400 |
+| `StartTask` ignoraba errores JSON | MEDIA | Se agregó validación `Decode` con error 400 |
+| Auth bypass por path no normalizado | BAJA | Se agregó `/health/` al bypass |
+| `GetByName` exponía el token | BAJA | `agent.Token = ""` antes de retornar |
+| Dockerfile usaba `scratch` sin CGO | ALTA | Se cambió a `alpine:3.19` |
+

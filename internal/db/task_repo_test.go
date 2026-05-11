@@ -2,9 +2,10 @@ package db
 
 import (
 	"database/sql"
+	"errors"
 	"testing"
 
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/models"
 
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -54,7 +55,7 @@ func TestClaimTask_Valid(t *testing.T) {
 	repo := NewTaskRepo(db)
 	repo.Create(&models.Task{ID: "t001", Title: "test"})
 
-	if err := repo.ClaimTask("t001", "worker-a"); err != nil {
+	if _, err := repo.ClaimTask("t001", "worker-a"); err != nil {
 		t.Fatal(err)
 	}
 	task, _ := repo.GetByID("t001")
@@ -69,8 +70,16 @@ func TestClaimTask_AlreadyClaimed(t *testing.T) {
 	repo.Create(&models.Task{ID: "t001", Title: "test"})
 	repo.ClaimTask("t001", "worker-a")
 
-	if err := repo.ClaimTask("t001", "worker-b"); err == nil {
-		t.Error("expected error claiming already-claimed task")
+	_, err := repo.ClaimTask("t001", "worker-b")
+	if err == nil {
+		t.Fatal("expected error claiming already-claimed task")
+	}
+	var ce *ConflictError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *ConflictError, got %T", err)
+	}
+	if ce.CurrentStatus != "claimed" {
+		t.Errorf("expected current_status 'claimed', got %q", ce.CurrentStatus)
 	}
 }
 
@@ -80,7 +89,7 @@ func TestStartTask(t *testing.T) {
 	repo.Create(&models.Task{ID: "t001", Title: "test"})
 	repo.ClaimTask("t001", "worker-a")
 
-	if err := repo.StartTask("t001"); err != nil {
+	if _, err := repo.StartTask("t001"); err != nil {
 		t.Fatal(err)
 	}
 	task, _ := repo.GetByID("t001")
@@ -94,8 +103,16 @@ func TestStartTask_NotClaimed(t *testing.T) {
 	repo := NewTaskRepo(db)
 	repo.Create(&models.Task{ID: "t001", Title: "test"})
 
-	if err := repo.StartTask("t001"); err == nil {
-		t.Error("expected error starting pending task")
+	_, err := repo.StartTask("t001")
+	if err == nil {
+		t.Fatal("expected error starting pending task")
+	}
+	var ce *ConflictError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *ConflictError, got %T", err)
+	}
+	if ce.CurrentStatus != "pending" {
+		t.Errorf("expected current_status 'pending', got %q", ce.CurrentStatus)
 	}
 }
 
@@ -106,7 +123,7 @@ func TestBlockTask(t *testing.T) {
 	repo.ClaimTask("t001", "worker-a")
 	repo.StartTask("t001")
 
-	if err := repo.BlockTask("t001"); err != nil {
+	if _, err := repo.BlockTask("t001"); err != nil {
 		t.Fatal(err)
 	}
 	task, _ := repo.GetByID("t001")
@@ -122,7 +139,7 @@ func TestCompleteTask(t *testing.T) {
 	repo.ClaimTask("t001", "worker-a")
 	repo.StartTask("t001")
 
-	if err := repo.CompleteTask("t001", "done"); err != nil {
+	if _, err := repo.CompleteTask("t001", "done"); err != nil {
 		t.Fatal(err)
 	}
 	task, _ := repo.GetByID("t001")
@@ -138,7 +155,7 @@ func TestFailTask(t *testing.T) {
 	repo.ClaimTask("t001", "worker-a")
 	repo.StartTask("t001")
 
-	if err := repo.FailTask("t001", "something broke"); err != nil {
+	if _, err := repo.FailTask("t001", "something broke"); err != nil {
 		t.Fatal(err)
 	}
 	task, _ := repo.GetByID("t001")
@@ -152,8 +169,16 @@ func TestFailTask_WrongState(t *testing.T) {
 	repo := NewTaskRepo(db)
 	repo.Create(&models.Task{ID: "t001", Title: "test"})
 
-	if err := repo.FailTask("t001", "should fail"); err == nil {
-		t.Error("expected error failing pending task")
+	_, err := repo.FailTask("t001", "should fail")
+	if err == nil {
+		t.Fatal("expected error failing pending task")
+	}
+	var ce *ConflictError
+	if !errors.As(err, &ce) {
+		t.Fatalf("expected *ConflictError, got %T", err)
+	}
+	if ce.CurrentStatus != "pending" {
+		t.Errorf("expected current_status 'pending', got %q", ce.CurrentStatus)
 	}
 }
 
@@ -183,6 +208,89 @@ func TestUpdateStatus_NotFound(t *testing.T) {
 	repo := NewTaskRepo(db)
 
 	if err := repo.UpdateStatus("nonexistent", "completed"); err == nil {
+		t.Error("expected error for nonexistent task")
+	}
+}
+
+func TestAddAndGetArtifacts(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+	repo.Create(&models.Task{ID: "t001", Title: "test"})
+
+	err := repo.AddArtifact("t001", models.Artifact{Key: "report.pdf", Bucket: "acb-artifacts", Size: 12345, ContentType: "application/pdf"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	artifacts, err := repo.GetArtifacts("t001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(artifacts))
+	}
+	if artifacts[0].Key != "report.pdf" {
+		t.Errorf("got key %q", artifacts[0].Key)
+	}
+	if artifacts[0].ContentType != "application/pdf" {
+		t.Errorf("got content_type %q", artifacts[0].ContentType)
+	}
+}
+
+func TestAddMultipleArtifacts(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+	repo.Create(&models.Task{ID: "t001", Title: "test"})
+
+	repo.AddArtifact("t001", models.Artifact{Key: "a.txt", Size: 10})
+	repo.AddArtifact("t001", models.Artifact{Key: "b.txt", Size: 20})
+
+	artifacts, err := repo.GetArtifacts("t001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(artifacts) != 2 {
+		t.Fatalf("expected 2 artifacts, got %d", len(artifacts))
+	}
+}
+
+func TestRemoveArtifact(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+	repo.Create(&models.Task{ID: "t001", Title: "test"})
+
+	repo.AddArtifact("t001", models.Artifact{Key: "a.txt", Size: 10})
+	repo.AddArtifact("t001", models.Artifact{Key: "b.txt", Size: 20})
+
+	if err := repo.RemoveArtifact("t001", "a.txt"); err != nil {
+		t.Fatal(err)
+	}
+
+	artifacts, _ := repo.GetArtifacts("t001")
+	if len(artifacts) != 1 {
+		t.Fatalf("expected 1 artifact, got %d", len(artifacts))
+	}
+	if artifacts[0].Key != "b.txt" {
+		t.Errorf("expected b.txt, got %q", artifacts[0].Key)
+	}
+}
+
+func TestRemoveArtifact_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+	repo.Create(&models.Task{ID: "t001", Title: "test"})
+
+	if err := repo.RemoveArtifact("t001", "nonexistent"); err != nil {
+		t.Errorf("expected nil for nonexistent key, got %v", err)
+	}
+}
+
+func TestAddArtifact_NonexistentTask(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+
+	err := repo.AddArtifact("nonexistent", models.Artifact{Key: "x"})
+	if err == nil {
 		t.Error("expected error for nonexistent task")
 	}
 }

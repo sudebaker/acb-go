@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/models"
 )
 
 type AgentRepo struct {
@@ -75,6 +75,7 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 	if heartbeat.Valid {
 		agent.LastHeartbeat = heartbeat.String
 	}
+	agent.Token = ""
 	return agent, nil
 }
 

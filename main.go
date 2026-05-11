@@ -1,14 +1,16 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"log"
 	"net/http"
 
-	"github.com/amphora/acb/internal/api"
-	"github.com/amphora/acb/internal/config"
-	"github.com/amphora/acb/internal/db"
-	acbredis "github.com/amphora/acb/internal/redis"
+	"github.com/sudebaker/acb-go/internal/api"
+	"github.com/sudebaker/acb-go/internal/config"
+	"github.com/sudebaker/acb-go/internal/db"
+	acbredis "github.com/sudebaker/acb-go/internal/redis"
+	"github.com/sudebaker/acb-go/internal/rustfs"
 	goredis "github.com/redis/go-redis/v9"
 )
 
@@ -37,7 +39,16 @@ func main() {
 	agentRepo := db.NewAgentRepo(database)
 	pub := acbredis.NewPublisher(rdb)
 
-	r := api.NewRouter(taskRepo, gateRepo, agentRepo, pub)
+	rustfsClient := rustfs.NewClient(
+		cfg.RustFSEndpoint, cfg.RustFSRegion,
+		cfg.RustFSAccessKey, cfg.RustFSSecretKey,
+		cfg.RustFSBucket,
+	)
+	if err := rustfsClient.EnsureBucket(context.Background()); err != nil {
+		log.Printf("warning: failed to ensure rustfs bucket: %v", err)
+	}
+
+	r := api.NewRouter(taskRepo, gateRepo, agentRepo, pub, rustfsClient)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("ACB listening on %s", addr)

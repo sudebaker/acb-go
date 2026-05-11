@@ -3,7 +3,7 @@ package db
 import (
 	"testing"
 
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/models"
 )
 
 func TestCreateGate(t *testing.T) {

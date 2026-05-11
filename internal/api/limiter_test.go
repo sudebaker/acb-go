@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amphora/acb/internal/db"
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/db"
+	"github.com/sudebaker/acb-go/internal/models"
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/time/rate"
 )
