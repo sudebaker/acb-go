@@ -10,6 +10,7 @@ import (
 
 type AgentHandler struct {
 	agentRepo *db.AgentRepo
+	limiter   *RateLimiter
 }
 
 func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
@@ -25,6 +26,11 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Name == "" {
 		WriteError(w, 400, "missing_name", "agent name is required")
+		return
+	}
+
+	if h.limiter != nil && !h.limiter.Allow(input.Name) {
+		WriteError(w, 429, "rate_limited", "too many heartbeats")
 		return
 	}
 

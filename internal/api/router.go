@@ -2,11 +2,13 @@ package api
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/amphora/acb/internal/db"
 	acbredis "github.com/amphora/acb/internal/redis"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
+	"golang.org/x/time/rate"
 )
 
 func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher) *chi.Mux {
@@ -39,7 +41,8 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	}
 
 	if agentRepo != nil {
-		ah := &AgentHandler{agentRepo: agentRepo}
+		limiter := NewRateLimiter(rate.Every(6*time.Second), 1)
+		ah := &AgentHandler{agentRepo: agentRepo, limiter: limiter}
 		r.Post("/agents/heartbeat", ah.Heartbeat)
 		r.Get("/agents/{name}", ah.GetAgent)
 	}
