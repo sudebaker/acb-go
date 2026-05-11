@@ -2,11 +2,12 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
-	"github.com/amphora/acb/internal/db"
-	"github.com/amphora/acb/internal/models"
-	acbredis "github.com/amphora/acb/internal/redis"
+	"github.com/sudebaker/acb-go/internal/db"
+	"github.com/sudebaker/acb-go/internal/models"
+	acbredis "github.com/sudebaker/acb-go/internal/redis"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -55,7 +56,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventNewTask, task.ID, task.Assignee)
+	go h.pub.PublishTaskEvent(acbredis.EventNewTask, task.ID, task.Assignee, "", "")
 
 	WriteJSON(w, 201, task)
 }
@@ -107,28 +108,38 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.taskRepo.ClaimTask(id, input.Assignee); err != nil {
-		WriteError(w, 409, "claim_failed", err.Error())
+	task, err := h.taskRepo.ClaimTask(id, input.Assignee)
+	if err != nil {
+		var ce *db.ConflictError
+		if errors.As(err, &ce) {
+			WriteConflict(w, "claim_failed", ce.Message, ce.CurrentStatus)
+		} else {
+			WriteError(w, 409, "claim_failed", err.Error())
+		}
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskClaimed, id, input.Assignee)
+	go h.pub.PublishTaskEvent(acbredis.EventTaskClaimed, id, input.Assignee, "", "")
 
-	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
 }
 
 func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	if err := h.taskRepo.StartTask(id); err != nil {
-		WriteError(w, 409, "start_failed", err.Error())
+	task, err := h.taskRepo.StartTask(id)
+	if err != nil {
+		var ce *db.ConflictError
+		if errors.As(err, &ce) {
+			WriteConflict(w, "start_failed", ce.Message, ce.CurrentStatus)
+		} else {
+			WriteError(w, 409, "start_failed", err.Error())
+		}
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskStarted, id, "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskStarted, id, "", "", "")
 
-	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
 }
 
@@ -148,8 +159,13 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.taskRepo.BlockTask(id); err != nil {
-		WriteError(w, 409, "block_failed", err.Error())
+	if _, err := h.taskRepo.BlockTask(id); err != nil {
+		var ce *db.ConflictError
+		if errors.As(err, &ce) {
+			WriteConflict(w, "block_failed", ce.Message, ce.CurrentStatus)
+		} else {
+			WriteError(w, 409, "block_failed", err.Error())
+		}
 		return
 	}
 
@@ -164,7 +180,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskBlocked, id, "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskBlocked, id, "", input.GateID, "")
 
 	WriteJSON(w, 200, map[string]string{"status": "blocked", "gate_id": input.GateID})
 }
@@ -193,10 +209,9 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "update_failed", err.Error())
 		return
 	}
-	go h.pub.PublishTaskEvent(acbredis.EventTaskUnblock, id, "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskUnblock, id, "", input.GateID, "")
 
-	task, _ := h.taskRepo.GetByID(id)
-	WriteJSON(w, 200, task)
+	WriteJSON(w, 200, map[string]string{"id": id, "status": "in_progress"})
 }
 
 func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -210,14 +225,19 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.taskRepo.CompleteTask(id, input.Summary); err != nil {
-		WriteError(w, 409, "complete_failed", err.Error())
+	task, err := h.taskRepo.CompleteTask(id, input.Summary)
+	if err != nil {
+		var ce *db.ConflictError
+		if errors.As(err, &ce) {
+			WriteConflict(w, "complete_failed", ce.Message, ce.CurrentStatus)
+		} else {
+			WriteError(w, 409, "complete_failed", err.Error())
+		}
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskDone, id, "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskDone, id, "", "", input.Summary)
 
-	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
 }
 
@@ -232,13 +252,18 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.taskRepo.FailTask(id, input.Reason); err != nil {
-		WriteError(w, 409, "fail_failed", err.Error())
+	task, err := h.taskRepo.FailTask(id, input.Reason)
+	if err != nil {
+		var ce *db.ConflictError
+		if errors.As(err, &ce) {
+			WriteConflict(w, "fail_failed", ce.Message, ce.CurrentStatus)
+		} else {
+			WriteError(w, 409, "fail_failed", err.Error())
+		}
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, "", "", "")
 
-	task, _ := h.taskRepo.GetByID(id)
 	WriteJSON(w, 200, task)
 }

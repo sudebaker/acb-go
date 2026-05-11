@@ -25,7 +25,7 @@ func RunMigrations(db *sql.DB) error {
 		gate_id TEXT PRIMARY KEY,
 		task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
 		question TEXT NOT NULL,
-		ask TEXT NOT NULL DEFAULT 'Jesus',
+		ask TEXT NOT NULL DEFAULT 'human',
 		status TEXT NOT NULL DEFAULT 'pending'
 			CHECK(status IN ('pending','asked','answered','resolved')),
 		answer TEXT NOT NULL DEFAULT ''
@@ -37,6 +37,8 @@ func RunMigrations(db *sql.DB) error {
 		token TEXT NOT NULL DEFAULT '',
 		last_heartbeat TEXT
 	);
+
+	CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
 	`
 
 	_, err := db.Exec(schema)

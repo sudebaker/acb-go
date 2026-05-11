@@ -19,3 +19,13 @@ type ErrorResponse struct {
 func WriteError(w http.ResponseWriter, status int, code, message string) {
 	WriteJSON(w, status, ErrorResponse{Error: code, Message: message})
 }
+
+type ConflictResponse struct {
+	Error         string `json:"error"`
+	Message       string `json:"message,omitempty"`
+	CurrentStatus string `json:"current_status"`
+}
+
+func WriteConflict(w http.ResponseWriter, code, message, currentStatus string) {
+	WriteJSON(w, 409, ConflictResponse{Error: code, Message: message, CurrentStatus: currentStatus})
+}

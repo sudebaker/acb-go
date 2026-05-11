@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/models"
 )
 
 func TestUpsertAndGetAgent(t *testing.T) {
@@ -51,8 +51,11 @@ func TestGetByToken(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Name != "agent-alpha" || got.Token != "tok_123" {
-		t.Errorf("got %+v", got)
+	if got.Name != "agent-alpha" {
+		t.Errorf("expected name agent-alpha, got %q", got.Name)
+	}
+	if got.Token != "" {
+		t.Errorf("expected token to be cleared by GetByToken, got %q", got.Token)
 	}
 }
 

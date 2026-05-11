@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amphora/acb/internal/db"
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/db"
+	"github.com/sudebaker/acb-go/internal/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -34,7 +34,7 @@ func setupRouter(t *testing.T) (*sql.DB, http.Handler) {
 	gateRepo := db.NewGateRepo(d)
 	agentRepo := db.NewAgentRepo(d)
 	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil)
 	return d, r
 }
 
@@ -146,6 +146,11 @@ func TestClaimTask_AlreadyClaimed_409(t *testing.T) {
 	if w.Code != 409 {
 		t.Errorf("expected 409, got %d", w.Code)
 	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if cs, ok := resp["current_status"]; !ok || cs != "claimed" {
+		t.Errorf("expected current_status 'claimed', got %v", resp)
+	}
 }
 
 func TestStartTask_200(t *testing.T) {
@@ -174,6 +179,11 @@ func TestStartTask_WrongState_409(t *testing.T) {
 
 	if w.Code != 409 {
 		t.Errorf("expected 409, got %d", w.Code)
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if cs, ok := resp["current_status"]; !ok || cs != "pending" {
+		t.Errorf("expected current_status 'pending', got %v", resp)
 	}
 }
 
@@ -236,6 +246,11 @@ func TestFailTask_WrongState_409(t *testing.T) {
 
 	if w.Code != 409 {
 		t.Errorf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if cs, ok := resp["current_status"]; !ok || cs != "pending" {
+		t.Errorf("expected current_status 'pending', got %v", resp)
 	}
 }
 

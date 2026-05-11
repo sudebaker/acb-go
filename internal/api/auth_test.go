@@ -6,8 +6,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/amphora/acb/internal/db"
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/db"
+	"github.com/sudebaker/acb-go/internal/models"
 	"github.com/go-chi/chi/v5"
 	_ "github.com/mattn/go-sqlite3"
 )

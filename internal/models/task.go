@@ -19,7 +19,8 @@ type Task struct {
 }
 
 type Artifact struct {
-	Key    string `json:"key"`
-	Bucket string `json:"bucket"`
-	Size   int64  `json:"size"`
+	Key         string `json:"key"`
+	Bucket      string `json:"bucket"`
+	Size        int64  `json:"size"`
+	ContentType string `json:"content_type"`
 }

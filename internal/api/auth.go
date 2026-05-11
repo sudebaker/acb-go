@@ -4,7 +4,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/amphora/acb/internal/db"
+	"github.com/sudebaker/acb-go/internal/db"
 )
 
 func AuthMiddleware(repo *db.AgentRepo) func(http.Handler) http.Handler {

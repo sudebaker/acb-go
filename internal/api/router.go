@@ -4,14 +4,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/amphora/acb/internal/db"
-	acbredis "github.com/amphora/acb/internal/redis"
+	"github.com/sudebaker/acb-go/internal/db"
+	acbredis "github.com/sudebaker/acb-go/internal/redis"
+	"github.com/sudebaker/acb-go/internal/rustfs"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/time/rate"
 )
 
-func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher) *chi.Mux {
+func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher, rustfsClient *rustfs.Client) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -38,6 +39,13 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 		r.Post("/tasks/{id}/unblock", h.UnblockTask)
 		r.Post("/tasks/{id}/complete", h.CompleteTask)
 		r.Post("/tasks/{id}/fail", h.FailTask)
+	}
+
+	if rustfsClient != nil && taskRepo != nil {
+		ah := &ArtifactHandler{taskRepo: taskRepo, rustfs: rustfsClient}
+		r.Post("/tasks/{id}/artifacts", ah.UploadArtifact)
+		r.Get("/tasks/{id}/artifacts", ah.DispatchListOrDownload)
+		r.Delete("/tasks/{id}/artifacts", ah.DeleteArtifact)
 	}
 
 	if agentRepo != nil {

@@ -8,9 +8,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/amphora/acb/internal/api"
-	"github.com/amphora/acb/internal/db"
-	"github.com/amphora/acb/internal/models"
+	"github.com/sudebaker/acb-go/internal/api"
+	"github.com/sudebaker/acb-go/internal/db"
+	"github.com/sudebaker/acb-go/internal/models"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -28,7 +28,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 
 	agentRepo.UpsertAgent(&models.Agent{Name: "worker-a", Token: "e2e-token"})
 
-	r := api.NewRouter(taskRepo, gateRepo, agentRepo, nil)
+	r := api.NewRouter(taskRepo, gateRepo, agentRepo, nil, nil)
 
 	auth := func(method, target, body string) *http.Request {
 		req := httptest.NewRequest(method, target, strings.NewReader(body))

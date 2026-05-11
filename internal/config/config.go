@@ -12,18 +12,24 @@ type Config struct {
 	RedisPass      string
 	RustFSEndpoint string
 	RustFSBucket   string
+	RustFSRegion   string
+	RustFSAccessKey string
+	RustFSSecretKey string
 	LogLevel       string
 }
 
 func Load() *Config {
 	return &Config{
-		Port:           getEnvInt("ACB_PORT", 8080),
-		DBPath:         getEnv("ACB_DB_PATH", "/var/lib/acb/acb.db"),
-		RedisAddr:      getEnv("ACB_REDIS_ADDR", "localhost:6379"),
-		RedisPass:      getEnv("ACB_REDIS_PASS", ""),
-		RustFSEndpoint: getEnv("ACB_RUSTFS_ENDPOINT", "http://localhost:8085"),
-		RustFSBucket:   getEnv("ACB_RUSTFS_BUCKET", "acb-artifacts"),
-		LogLevel:       getEnv("ACB_LOG_LEVEL", "info"),
+		Port:            getEnvInt("ACB_PORT", 8080),
+		DBPath:          getEnv("ACB_DB_PATH", "/var/lib/acb/acb.db"),
+		RedisAddr:       getEnv("ACB_REDIS_ADDR", "localhost:6379"),
+		RedisPass:       getEnv("ACB_REDIS_PASS", ""),
+		RustFSEndpoint:  getEnv("ACB_RUSTFS_ENDPOINT", "localhost:8085"),
+		RustFSBucket:    getEnv("ACB_RUSTFS_BUCKET", "acb-artifacts"),
+		RustFSRegion:    getEnv("RUSTFS_REGION", "us-east-1"),
+		RustFSAccessKey: getEnv("RUSTFS_ACCESS_KEY_ID", ""),
+		RustFSSecretKey: getEnv("RUSTFS_SECRET_ACCESS_KEY", ""),
+		LogLevel:        getEnv("ACB_LOG_LEVEL", "info"),
 	}
 }
 
