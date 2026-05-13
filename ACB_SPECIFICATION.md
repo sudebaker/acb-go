@@ -24,7 +24,7 @@ El archivo de base de datos se ubicará en `/var/lib/acb/acb.db`.
 | `assignee` | TEXT | Agente asignado. **NULL** hasta que un agente reclame la tarea. |
 | `status` | TEXT | `pending`, `claimed`, `in_progress`, `blocked`, `completed`, `failed`. |
 | `priority` | INTEGER | Importancia (1-5). |
-| `required_skills` | TEXT (JSON) | Skills necesarios para ejecutar la tarea (ej. `["docker","python"]`). Usado para auto-matching. |
+| `required_skills` | TEXT (JSON) | Skills necesarios para ejecutar la tarea (ej. `["docker","python"]`). El ACB verifica que el agente que reclama tenga todos estos skills. |
 | `tags` | TEXT (JSON) | Categorización flexible (ej. `["urgent","production"]`). |
 | `parents` | TEXT (JSON) | IDs de tareas predecesoras necesarias. |
 | `body_goal` | TEXT | Definición del objetivo. |
@@ -51,7 +51,7 @@ El archivo de base de datos se ubicará en `/var/lib/acb/acb.db`.
 | `name` | TEXT (PK) | Nombre del agente. |
 | `port` | INTEGER | Puerto HTTP expuesto por el agente (opcional). |
 | `token` | TEXT | Token Bearer para autenticación con el ACB. |
-| `skills` | TEXT (JSON) | Capacidades declaradas (ej. `["docker","linux","osint","python"]`). |
+| `skills` | TEXT (JSON) | Capacidades del agente, definidas en el despliegue (ej. `["docker","linux","osint","python"]`). No autodeclarado por el agente. |
 | `last_heartbeat` | TEXT | Último timestamp de señal de vida. |
 
 ---
@@ -59,14 +59,13 @@ El archivo de base de datos se ubicará en `/var/lib/acb/acb.db`.
 ## 3. Ciclo de Vida y Flujo de Eventos
 
 ### 3.1 Flujo Nominal
-1. **Creación**: El orquestador envía `POST /tasks` con `required_skills` y sin `assignee`. ACB inserta registro → `status=pending` → Publica en Redis `tasks:pending` y `skill:<skill_name>` por cada skill requerido.
-2. **Auto-matching**: Los agentes suscritos a `skill:<skill_name>` reciben la notificación. Si un agente declara los skills necesarios, puede reclamar la tarea con `POST /tasks/:id/claim`.
-3. **Reclamación**: Agente llama a `POST /tasks/:id/claim` → `status=claimed`, `assignee=<agent_name>`.
-4. **Ejecución**: Agente llama a `POST /tasks/:id/start` → `status=in_progress`.
-5. **Bloqueo (Gate)**: Agente llama a `POST /tasks/:id/block`.
+1. **Creación**: El orquestador envía `POST /tasks` con `required_skills` y sin `assignee`. ACB inserta registro → `status=pending` → Publica en Redis `tasks:pending` (broadcast a todos los agentes).
+2. **Reclamación validada**: Cualquier agente puede intentar reclamar con `POST /tasks/:id/claim`. El ACB verifica que el agente autenticado tenga **todos** los skills en `required_skills`. Si no cumple → `403 Forbidden`. Si cumple → `status=claimed`, `assignee=<agent_name>`. El claim es atómico: otro agente que intente reclamar recibe `409 Conflict`.
+3. **Ejecución**: Agente llama a `POST /tasks/:id/start` → `status=in_progress`.
+4. **Bloqueo (Gate)**: Agente llama a `POST /tasks/:id/block`.
    - Estado → `blocked`.
    - Notificación → Redis `tasks:gates` → Intervención humana → `POST /tasks/:id/unblock`.
-6. **Finalización**: Agente llama a `POST /tasks/:id/complete` → Adjunta resumen y claves de artefactos → `status=completed`.
+5. **Finalización**: Agente llama a `POST /tasks/:id/complete` → Adjunta resumen y claves de artefactos → `status=completed`.
 
 ### 3.2 Notificaciones Redis (JSON)
 Ejemplos de mensajes transportados por el bus:
@@ -78,8 +77,7 @@ Ejemplos de mensajes transportados por el bus:
 **Canales de publicación:**
 | Canal | Propósito | Suscriptor típico |
 |-------|-----------|-------------------|
-| `tasks:pending` | Broadcast de todas las tareas nuevas | Orquestadores, dashboards |
-| `skill:<name>` | Tareas que requieren un skill específico | Agentes con ese skill |
+| `tasks:pending` | Broadcast de todas las tareas nuevas | Todos los agentes |
 | `agent:<name>` | Notificaciones dirigidas a un agente concreto | Agente específico |
 | `tasks:gates` | Tareas bloqueadas esperando resolución humana | Orquestadores, notificadores |
 
@@ -89,7 +87,7 @@ Ejemplos de mensajes transportados por el bus:
 
 ### 4.1 Gestión de Tareas
 - **`POST /tasks`**: Crea una nueva tarea.
-- **`POST /tasks/:id/claim`**: Reclama la tarea para el agente actual.
+- **`POST /tasks/:id/claim`**: Reclama la tarea para el agente actual. El ACB verifica que el agente autenticado tenga **todos** los skills de `required_skills`. Si no → `403 Forbidden`.
 - **`POST /tasks/:id/start`**: Marca el inicio efectivo del trabajo.
 - **`POST /tasks/:id/block`**: Solicita resolución de un gate.
 - **`POST /tasks/:id/unblock`**: Proporciona la respuesta al gate (Usado por el orquestador).

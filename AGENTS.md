@@ -15,8 +15,8 @@ Go 1.22+, `go-sqlite3`, `chi/v5`, `go-redis/v9`, `google/uuid`, `godotenv`
 - **TDD per task**: write failing test → implement → pass → commit
 - **Single DB connection**: `SetMaxOpenConns(1)` (SQLite single-writer)
 - **Auth**: Bearer token per agent, validated against `agents` table; `/health` is public
-- **Skills**: Agents declare skills at registration; tasks declare `required_skills` → auto-matching via Redis `skill:<name>` channels
-- **Redis events**: fire-and-forget via goroutine, non-blocking; channels: `tasks:pending`, `skill:<name>`, `agent:<name>`, `tasks:gates`
+- **Skills**: Agents have skills set at deployment time; tasks declare `required_skills` → ACB validates on claim (403 if insufficient)
+- **Redis events**: fire-and-forget via goroutine, non-blocking; channels: `tasks:pending`, `agent:<name>`, `tasks:gates`
 - **Task states**: `pending → claimed → in_progress → blocked → completed/failed`
 - **Env vars**: `ACB_PORT`, `ACB_DB_PATH`, `ACB_REDIS_ADDR`, `ACB_REDIS_PASS`, `ACB_RUSTFS_ENDPOINT`, `ACB_RUSTFS_BUCKET`, `ACB_LOG_LEVEL`
 

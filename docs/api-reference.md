@@ -134,7 +134,7 @@ Get a single task by ID.
 
 ### `POST /tasks/:id/claim`
 
-Claim a pending task for an agent.
+Claim a pending task for an agent. The ACB validates that the authenticated agent has **all** the skills listed in `required_skills`.
 
 **Auth:** Bearer token required
 
@@ -146,6 +146,11 @@ Claim a pending task for an agent.
 **Response `200`:**
 ```json
 {"id": "t_a1b2c3d4", "status": "claimed", "assignee": "agent-alpha"}
+```
+
+**Response `403`:**
+```json
+{"error": "insufficient_skills", "message": "agent lacks required skills for task t_a1b2c3d4"}
 ```
 
 **Response `409`:**
@@ -414,6 +419,7 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 | `missing_key` | 400 | Key query parameter required |
 | `invalid_form` | 400 | Malformed multipart form |
 | `unauthorized` | 401 | Missing or invalid Bearer token |
+| `insufficient_skills` | 403 | Agent lacks required skills for task |
 | `not_found` | 404 | Resource not found |
 | `claim_failed` | 409 | Task cannot be claimed |
 | `start_failed` | 409 | Task cannot be started |
@@ -439,9 +445,8 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 
 ## Redis Events
 
-Published on multiple channels depending on the event type:
+Published on the following channels depending on the event type:
 
-- `skill:<skill_name>` — for each skill in `required_skills` (new_task only)
 - `agent:<agent_name>` — targeted to the involved agent
 - `tasks:pending` — broadcast of new pending tasks
 - `tasks:gates` — broadcast of blocked tasks requiring human intervention

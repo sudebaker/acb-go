@@ -35,7 +35,7 @@ agentRepo.UpsertAgent(&models.Agent{
 })
 ```
 
-Each agent must have a unique token. The token is used for Bearer authentication on every request. The `skills` field is used for task auto-matching — agents receive events only for tasks whose `required_skills` intersect with their declared skills.
+Each agent must have a unique token. The token is used for Bearer authentication on every request. The `skills` field is configured at deployment time by the operator — the agent does not declare its own skills. The ACB validates these skills when the agent attempts to claim a task.
 
 ---
 
@@ -101,9 +101,7 @@ GET /tasks?status=pending&required_skills=python,linux
 Authorization: Bearer your-secret-token
 ```
 
-Returns pending tasks whose `required_skills` intersect with the agent's declared skills. Agents should filter by their own capabilities to find relevant work.
-
-Alternatively, subscribe to Redis channel `skill:<skill_name>` (see section 6).
+Returns pending tasks. Agents should filter by their own capabilities to find relevant work.
 
 #### 3.2 Claim
 ```http
@@ -114,7 +112,7 @@ Content-Type: application/json
 {"assignee": "agent-alpha"}
 ```
 
-Only tasks in `pending` state can be claimed. Returns `409` if already claimed.
+Only tasks in `pending` state can be claimed. The ACB validates that the authenticated agent has **all** the skills listed in `required_skills`. Returns `403` if the agent lacks the necessary skills, or `409` if already claimed by another agent.
 
 #### 3.3 Start
 ```http
@@ -207,15 +205,14 @@ Agents can subscribe to Redis channels to receive real-time notifications instea
 
 | Channel | Purpose |
 |---------|---------|
-| `skill:<skill_name>` | Tasks requiring a specific skill (recommended for agents) |
 | `agent:<agent_name>` | Direct notifications for a specific agent |
 | `tasks:pending` | Broadcast of all new tasks |
 
-**Recommended subscription:** Subscribe to `skill:<skill_name>` for each skill your agent declares. This ensures you only receive relevant tasks.
+**Recommended subscription:** Subscribe to `agent:<agent_name>` for direct notifications, plus `tasks:pending` to discover new work.
 
 Example subscription (Redis CLI):
 ```bash
-SUBSCRIBE "skill:python" "skill:linux" "agent:agent-alpha"
+SUBSCRIBE "agent:agent-alpha" "tasks:pending"
 ```
 
 **Events relevant to agents:**
@@ -251,6 +248,7 @@ for msg := range ch {
 |-------------|---------|----------|
 | `400` | Malformed request | Fix request body |
 | `401` | Invalid/missing token | Check Bearer token |
+| `403` | Insufficient skills | Agent lacks required skills for this task |
 | `404` | Resource not found | Check task/agent ID |
 | `409` | State conflict | Check current task state and retry with valid transition |
 | `429` | Rate limited | Wait and retry with exponential backoff |
