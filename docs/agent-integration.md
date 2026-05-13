@@ -22,19 +22,20 @@ Before an agent can interact with the ACB, it must be registered. This is typica
 
 **SQL (direct setup):**
 ```sql
-INSERT INTO agents (name, port, token) VALUES ('agent-alpha', 8081, 'your-secret-token');
+INSERT INTO agents (name, port, token, skills) VALUES ('agent-alpha', 8081, 'your-secret-token', '["python","linux","docker"]');
 ```
 
 **Via repository (Go code):**
 ```go
 agentRepo.UpsertAgent(&models.Agent{
-    Name:  "agent-alpha",
-    Port:  8081,
-    Token: "your-secret-token",
+    Name:   "agent-alpha",
+    Port:   8081,
+    Token:  "your-secret-token",
+    Skills: []string{"python", "linux", "docker"},
 })
 ```
 
-Each agent must have a unique token. The token is used for Bearer authentication on every request.
+Each agent must have a unique token. The token is used for Bearer authentication on every request. The `skills` field is used for task auto-matching — agents receive events only for tasks whose `required_skills` intersect with their declared skills.
 
 ---
 
@@ -96,11 +97,13 @@ The standard task lifecycle for an agent:
 
 #### 3.1 Poll for Tasks
 ```http
-GET /tasks?status=pending&assignee=agent-alpha
+GET /tasks?status=pending&required_skills=python,linux
 Authorization: Bearer your-secret-token
 ```
 
-Returns pending tasks assigned to your agent. If the `assignee` field was set at creation, the task will appear in filtered results.
+Returns pending tasks whose `required_skills` intersect with the agent's declared skills. Agents should filter by their own capabilities to find relevant work.
+
+Alternatively, subscribe to Redis channel `skill:<skill_name>` (see section 6).
 
 #### 3.2 Claim
 ```http
@@ -200,11 +203,19 @@ The agent should listen for Redis events (see section 6) or poll `GET /tasks/:id
 
 Agents can subscribe to Redis channels to receive real-time notifications instead of polling.
 
-**Channel format:** `agent:<agent_name>`
+**Channel formats:**
+
+| Channel | Purpose |
+|---------|---------|
+| `skill:<skill_name>` | Tasks requiring a specific skill (recommended for agents) |
+| `agent:<agent_name>` | Direct notifications for a specific agent |
+| `tasks:pending` | Broadcast of all new tasks |
+
+**Recommended subscription:** Subscribe to `skill:<skill_name>` for each skill your agent declares. This ensures you only receive relevant tasks.
 
 Example subscription (Redis CLI):
 ```bash
-SUBSCRIBE "agent:agent-alpha"
+SUBSCRIBE "skill:python" "skill:linux" "agent:agent-alpha"
 ```
 
 **Events relevant to agents:**
@@ -216,7 +227,7 @@ SUBSCRIBE "agent:agent-alpha"
 
 **Event payload example:**
 ```json
-{"event":"new_task","task_id":"t_123","agent":"agent-alpha"}
+{"event":"new_task","task_id":"t_123","required_skills":["python","linux"],"agent":"agent-alpha"}
 ```
 
 Events are fire-and-forget — the ACB does not retry on Redis failures. Agents should handle missed events gracefully (e.g., periodic polling as fallback).

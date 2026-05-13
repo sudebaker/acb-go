@@ -21,9 +21,11 @@ El archivo de base de datos se ubicará en `/var/lib/acb/acb.db`.
 |---|---|---|
 | `id` | TEXT (PK) | UUID de la tarea (ej. `t_a1b2c3d4`). |
 | `title` | TEXT | Nombre breve de la tarea. |
-| `assignee` | TEXT | Nombre del agente asignado (ej. `agent-a`, `agent-b`). |
+| `assignee` | TEXT | Agente asignado. **NULL** hasta que un agente reclame la tarea. |
 | `status` | TEXT | `pending`, `claimed`, `in_progress`, `blocked`, `completed`, `failed`. |
 | `priority` | INTEGER | Importancia (1-5). |
+| `required_skills` | TEXT (JSON) | Skills necesarios para ejecutar la tarea (ej. `["docker","python"]`). Usado para auto-matching. |
+| `tags` | TEXT (JSON) | Categorización flexible (ej. `["urgent","production"]`). |
 | `parents` | TEXT (JSON) | IDs de tareas predecesoras necesarias. |
 | `body_goal` | TEXT | Definición del objetivo. |
 | `body_context` | TEXT | Contexto necesario para la ejecución. |
@@ -47,8 +49,9 @@ El archivo de base de datos se ubicará en `/var/lib/acb/acb.db`.
 | Campo | Tipo | Descripción |
 |---|---|---|
 | `name` | TEXT (PK) | Nombre del agente. |
-| `port` | INTEGER | Puerto HTTP expuesto por el agente. |
+| `port` | INTEGER | Puerto HTTP expuesto por el agente (opcional). |
 | `token` | TEXT | Token Bearer para autenticación con el ACB. |
+| `skills` | TEXT (JSON) | Capacidades declaradas (ej. `["docker","linux","osint","python"]`). |
 | `last_heartbeat` | TEXT | Último timestamp de señal de vida. |
 
 ---
@@ -56,19 +59,29 @@ El archivo de base de datos se ubicará en `/var/lib/acb/acb.db`.
 ## 3. Ciclo de Vida y Flujo de Eventos
 
 ### 3.1 Flujo Nominal
-1. **Creación**: El orquestador envía `POST /tasks`. ACB inserta registro $\\rightarrow$ `status=pending` $\\rightarrow$ Publica en Redis `agent:<name>`.
-2. **Reclamación**: Agente llama a `POST /tasks/:id/claim` $\rightarrow$ `status=claimed`.
-3. **Ejecución**: Agente llama a `POST /tasks/:id/start` $\rightarrow$ `status=in_progress`.
-4. **Bloqueo (Gate)**: Agente llama a `POST /tasks/:id/block`.
-   - Estado $\rightarrow$ `blocked`.
-- Notificación $\\rightarrow$ Redis `orchestrator` $\\rightarrow$ Intervención humana $\\rightarrow$ `POST /tasks/:id/unblock`.
-5. **Finalización**: Agente llama a `POST /tasks/:id/complete` $\rightarrow$ Adjunta resumen y claves de artefactos $\rightarrow$ `status=completed`.
+1. **Creación**: El orquestador envía `POST /tasks` con `required_skills` y sin `assignee`. ACB inserta registro → `status=pending` → Publica en Redis `tasks:pending` y `skill:<skill_name>` por cada skill requerido.
+2. **Auto-matching**: Los agentes suscritos a `skill:<skill_name>` reciben la notificación. Si un agente declara los skills necesarios, puede reclamar la tarea con `POST /tasks/:id/claim`.
+3. **Reclamación**: Agente llama a `POST /tasks/:id/claim` → `status=claimed`, `assignee=<agent_name>`.
+4. **Ejecución**: Agente llama a `POST /tasks/:id/start` → `status=in_progress`.
+5. **Bloqueo (Gate)**: Agente llama a `POST /tasks/:id/block`.
+   - Estado → `blocked`.
+   - Notificación → Redis `tasks:gates` → Intervención humana → `POST /tasks/:id/unblock`.
+6. **Finalización**: Agente llama a `POST /tasks/:id/complete` → Adjunta resumen y claves de artefactos → `status=completed`.
 
 ### 3.2 Notificaciones Redis (JSON)
 Ejemplos de mensajes transportados por el bus:
-- `{"event":"new_task", "task_id":"t_123"}`
-- `{"event":"task_blocked", "task_id":"t_123", "gate_id":"g1"}`
-- `{"event":"task_completed", "task_id":"t_123", "summary":"Análisis finalizado"}`
+
+- `{"event":"new_task","task_id":"t_123","required_skills":["docker","python"]}`
+- `{"event":"task_blocked","task_id":"t_123","gate_id":"g1"}`
+- `{"event":"task_completed","task_id":"t_123","summary":"Análisis finalizado"}`
+
+**Canales de publicación:**
+| Canal | Propósito | Suscriptor típico |
+|-------|-----------|-------------------|
+| `tasks:pending` | Broadcast de todas las tareas nuevas | Orquestadores, dashboards |
+| `skill:<name>` | Tareas que requieren un skill específico | Agentes con ese skill |
+| `agent:<name>` | Notificaciones dirigidas a un agente concreto | Agente específico |
+| `tasks:gates` | Tareas bloqueadas esperando resolución humana | Orquestadores, notificadores |
 
 ---
 
@@ -100,7 +113,7 @@ Ejemplos de mensajes transportados por el bus:
 
 ## 5. Defensa de RustFS como Storage
 
-A pesar de existir un sistema de archivos compartido (`/opt/data`), se mantiene la implementación de RustFS por las siguientes razones técnicas:
+RustFS (S3-compatible) se incluye como componente opcional para la gestión de artefactos por las siguientes razones técnicas:
 
 1. **Abstracción de Direccionamiento**: Sustituye rutas absolutas frágiles por un modelo de `Bucket/Key`. Esto evita conflictos de nombrado y errores de ruta entre diferentes agentes.
 2. **Integridad de Binarios**: RustFS garantiza que los artefactos pesados (modelos, dumps, imágenes) sean tratados como objetos inmutables una vez subidos, evitando la corrupción por escrituras concurrentes.
@@ -109,9 +122,9 @@ A pesar de existir un sistema de archivos compartido (`/opt/data`), se mantiene 
 ---
 
 ## 6. Implementación y Seguridad
-- **Identidad**: Todos los agentes operan bajo `uid 1000` para asegurar la propiedad de archivos en los volúmenes montados.
 - **Autenticación**: Uso de tokens Bearer únicos por agente, validados en cada petición al ACB.
 - **Aislamiento**: El ACB no modifica el MCP Orchestrator; se comunica con él mediante el flujo estándar de herramientas.
+- **Despliegue**: Los agentes se ejecutan en contenedores Docker con un UID compartido para garantizar la propiedad de archivos en volúmenes montados.
 
 ---
 

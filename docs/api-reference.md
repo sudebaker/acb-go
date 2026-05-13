@@ -54,31 +54,32 @@ Create a new task.
 {
   "id": "t_a1b2c3d4",
   "title": "Analyze log files",
-  "assignee": "agent-alpha",
+  "required_skills": ["python", "linux"],
   "priority": 3,
+  "tags": ["security", "urgent"],
   "parents": ["t_prev_001"],
   "body_goal": "Find anomalies in the access log",
   "body_context": "Logs are in /var/log/access.log",
-  "body_deliverable_format": "markdown",
-  "body_deliverable_path": "/reports/anomalies.md"
+  "body_deliverable_format": "markdown"
 }
 ```
 
-All fields except `id` and `title` are optional. Default status: `pending`.
+All fields except `id` and `title` are optional. `assignee` is omitted at creation — agents self-assign via `claim`. Default status: `pending`.
 
 **Response `201`:**
 ```json
 {
   "id": "t_a1b2c3d4",
   "title": "Analyze log files",
-  "assignee": "agent-alpha",
+  "assignee": null,
+  "required_skills": ["python", "linux"],
   "status": "pending",
   "priority": 3,
+  "tags": ["security", "urgent"],
   "parents": ["t_prev_001"],
   "body_goal": "Find anomalies in the access log",
   "body_context": "Logs are in /var/log/access.log",
   "body_deliverable_format": "markdown",
-  "body_deliverable_path": "/reports/anomalies.md",
   "created_at": "2025-01-15T10:30:00Z",
   "summary": "",
   "artifacts": []
@@ -98,7 +99,7 @@ List tasks with optional filters.
 
 **Auth:** Bearer token required
 
-**Query parameters:** `?status=pending&assignee=agent-alpha`
+**Query parameters:** `?status=pending` or `?status=pending&required_skills=python,linux`
 
 **Response `200`:**
 ```json
@@ -438,11 +439,16 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 
 ## Redis Events
 
-Published on channel `agent:<agent_name>` after each state transition.
+Published on multiple channels depending on the event type:
+
+- `skill:<skill_name>` — for each skill in `required_skills` (new_task only)
+- `agent:<agent_name>` — targeted to the involved agent
+- `tasks:pending` — broadcast of new pending tasks
+- `tasks:gates` — broadcast of blocked tasks requiring human intervention
 
 | Event | Trigger | Payload |
 |-------|---------|---------|
-| `new_task` | Task created | `{"event":"new_task","task_id":"t_123","agent":"agent-alpha"}` |
+| `new_task` | Task created | `{"event":"new_task","task_id":"t_123","required_skills":["python","linux"],"agent":"agent-alpha"}` |
 | `task_claimed` | Task claimed | `{"event":"task_claimed","task_id":"t_123","agent":"agent-alpha"}` |
 | `task_started` | Task started | `{"event":"task_started","task_id":"t_123"}` |
 | `task_blocked` | Task blocked | `{"event":"task_blocked","task_id":"t_123"}` |
@@ -457,11 +463,11 @@ Events are fire-and-forget via goroutines. Redis publish errors are logged but n
 ## cURL Examples
 
 ```bash
-# Create a task
+# Create a task with skill requirements
 curl -s -X POST http://localhost:8080/tasks \
   -H "Authorization: Bearer test-token" \
   -H "Content-Type: application/json" \
-  -d '{"id":"t001","title":"test","priority":3}'
+  -d '{"id":"t001","title":"test","required_skills":["python","linux"],"priority":3}'
 
 # Claim a task
 curl -s -X POST http://localhost:8080/tasks/t001/claim \
@@ -475,7 +481,7 @@ curl -s -X POST http://localhost:8080/agents/heartbeat \
   -H "Content-Type: application/json" \
   -d '{"name":"agent-alpha"}'
 
-# List pending tasks
-curl -s "http://localhost:8080/tasks?status=pending&assignee=agent-alpha" \
+# List pending tasks matching agent skills
+curl -s "http://localhost:8080/tasks?status=pending" \
   -H "Authorization: Bearer test-token"
 ```
