@@ -102,11 +102,6 @@ func (c *Client) Enabled() bool {
 	return c.enabled
 }
 
-func (c *Client) MaxUploadSizeBytes() int {
-	// Default is 32MB
-	return 32 * 1024 * 1024
-}
-
 func (c *Client) ListObjects(ctx context.Context, prefix string) ([]string, error) {
 	s := c.enabledOp()
 	if s == nil {

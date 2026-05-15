@@ -1,12 +1,12 @@
 package db
 
 import (
-\t"net/http"
-\t"strings"
-\t"testing"
-\t"time"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
 
-\t"github.com/sudebaker/acb-go/internal/models"
+	"github.com/sudebaker/acb-go/internal/models"
 )
 
 func TestUpsertAndGetAgent(t *testing.T) {

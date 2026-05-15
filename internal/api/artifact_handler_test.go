@@ -73,6 +73,18 @@ func (s *handlerMemStore) MakeBucket(_ context.Context) error {
 	return nil
 }
 
+func (s *handlerMemStore) ListObjects(_ context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []string
+	for key := range s.data {
+		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
+}
+
 func setupRouterWithRustFS(t *testing.T) (*db.TaskRepo, *rustfs.Client, http.Handler, *handlerMemStore) {
 	t.Helper()
 	d := setupTestDB(t)

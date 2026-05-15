@@ -4,16 +4,10 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    ports:
-      - "8080:8080"
+    network_mode: host
     env_file: .env
     volumes:
       - acb-data:/var/lib/acb
-    depends_on:
-      redis:
-        condition: service_healthy
-      rustfs:
-        condition: service_healthy
     restart: unless-stopped
     deploy:
       resources:
@@ -29,84 +23,11 @@ services:
         max-size: "10m"
         max-file: "3"
     healthcheck:
-      test: ["CMD-SHELL", "wget --no-verbose --spider http://localhost:8080/health > /dev/null 2>&1"]
+      test: ["CMD-SHELL", "wget --no-verbose --spider http://localhost:8090/health > /dev/null 2>&1 || exit 1"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-    networks:
-      - acb-net
-    labels:
-      com.acb.role: "orchestrator"
-
-  redis:
-    container_name: acb-redis
-    image: redis:7-alpine
-    ports:
-      - "127.0.0.1:6379:6379"
-    volumes:
-      - redis-data:/data
-    command: redis-server --appendonly yes --maxmemory 128mb --maxmemory-policy allkeys-lru
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-    logging:
-      driver: json-file
-      options:
-        max-size: "5m"
-        max-file: "2"
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-    networks:
-      - acb-net
-    labels:
-      com.acb.role: "cache"
-
-  rustfs:
-    container_name: acb-rustfs
-    image: rustfs/rustfs:latest
-    ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
-    environment:
-      RUSTFS_ACCESS_KEY: ${RUSTFS_ACCESS_KEY_ID}
-      RUSTFS_SECRET_KEY: ${RUSTFS_SECRET_ACCESS_KEY}
-      RUSTFS_REGION: ${RUSTFS_REGION:-us-east-1}
-    volumes:
-      - rustfs-data:/data
-    restart: unless-stopped
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 512M
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "3"
-    healthcheck:
-      test: ["CMD-SHELL", "nc -z localhost 9000"]
-      interval: 30s
-      timeout: 5s
-      retries: 3
-      start_period: 15s
-    networks:
-      - acb-net
-    labels:
-      com.acb.role: "storage"
 
 volumes:
   acb-data:
-  redis-data:
-  rustfs-data:
-
-networks:
-  acb-net:
-    driver: bridge

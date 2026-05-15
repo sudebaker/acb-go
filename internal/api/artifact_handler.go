@@ -34,10 +34,10 @@ func (h *ArtifactHandler) UploadArtifact(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-if err := r.ParseMultipartForm(int64(h.cfg.MaxUploadSizeMB) << 20); err != nil {
-	WriteError(w, 400, "invalid_form", "failed to parse multipart form")
-	return
-}
+	if err := r.ParseMultipartForm(int64(h.cfg.MaxUploadSizeMB) << 20); err != nil {
+		WriteError(w, 400, "invalid_form", "failed to parse multipart form")
+		return
+	}
 
 	file, header, err := r.FormFile("file")
 	if err != nil {
@@ -236,7 +236,7 @@ func (h *ArtifactHandler) CleanupArtifacts(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Clear artifacts in DB
-	if err := h.taskRepo.setArtifactsJSON(taskID, "[]"); err != nil {
+	if err := h.taskRepo.SetArtifactsJSON(taskID, "[]"); err != nil {
 		WriteError(w, 500, "clear_artifacts_failed", err.Error())
 		return
 	}

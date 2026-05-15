@@ -12,10 +12,10 @@ import (
 )
 
 type TaskHandler struct {
-\ttaskRepo   *db.TaskRepo
-\tgateRepo   *db.GateRepo
-\tagentRepo  *db.AgentRepo
-\tpub        *acbredis.Publisher
+	taskRepo   *db.TaskRepo
+	gateRepo   *db.GateRepo
+	agentRepo  *db.AgentRepo
+	pub        *acbredis.Publisher
 }
 
 func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -69,20 +69,20 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
-\tstatus := r.URL.Query().Get("status")
-\tassignee := r.URL.Query().Get("assignee")
-\trequiredSkills := r.URL.Query()["required_skills"]
+	status := r.URL.Query().Get("status")
+	assignee := r.URL.Query().Get("assignee")
+	requiredSkills := r.URL.Query()["required_skills"]
 
-\ttasks, err := h.taskRepo.List(status, assignee, requiredSkills...)
-\tif err != nil {
-\t\tWriteError(w, 500, "list_failed", err.Error())
-\t\treturn
-\t}
-\tif tasks == nil {
-\t\ttasks = []models.Task{}
-\t}
+	tasks, err := h.taskRepo.List(status, assignee, requiredSkills...)
+	if err != nil {
+		WriteError(w, 500, "list_failed", err.Error())
+		return
+	}
+	if tasks == nil {
+		tasks = []models.Task{}
+	}
 
-\tWriteJSON(w, 200, tasks)
+	WriteJSON(w, 200, tasks)
 }
 
 // GetTask returns a single task by ID

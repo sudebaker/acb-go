@@ -174,7 +174,7 @@ func (r *TaskRepo) UpdateStatus(id, status string) error {
 
 func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 	res, err := r.db.Exec(
-		"UPDATE tasks SET status = 'claimed', assignee = ? WHERE id = ? AND status = 'pending'",
+		"UPDATE tasks SET status = 'claimed', assignee = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'",
 		assignee, id,
 	)
 	if err != nil {
@@ -197,7 +197,7 @@ func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 
 func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 	res, err := r.db.Exec(
-		"UPDATE tasks SET status = 'in_progress' WHERE id = ? AND status = 'claimed'",
+		"UPDATE tasks SET status = 'in_progress', updated_at = datetime('now') WHERE id = ? AND status = 'claimed'",
 		id,
 	)
 	if err != nil {
@@ -219,7 +219,7 @@ func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 }
 
 func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'blocked' WHERE id = ? AND status IN ('in_progress', 'claimed')", id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'blocked', updated_at = datetime('now') WHERE id = ? AND status IN ('in_progress', 'claimed')", id)
 	if err != nil {
 		return nil, fmt.Errorf("block task: %w", err)
 	}
@@ -287,7 +287,7 @@ func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
 	return raw, nil
 }
 
-func (r *TaskRepo) setArtifactsJSON(id, raw string) error {
+func (r *TaskRepo) SetArtifactsJSON(id, raw string) error {
 	_, err := r.db.Exec("UPDATE tasks SET artifacts_json = ? WHERE id = ?", raw, id)
 	return err
 }
@@ -311,7 +311,7 @@ func (r *TaskRepo) AddArtifact(taskID string, artifact models.Artifact) error {
 		return fmt.Errorf("marshal artifacts: %w", err)
 	}
 
-	return r.setArtifactsJSON(taskID, string(data))
+	return r.SetArtifactsJSON(taskID, string(data))
 }
 
 func (r *TaskRepo) RemoveArtifact(taskID string, key string) error {
@@ -339,7 +339,7 @@ func (r *TaskRepo) RemoveArtifact(taskID string, key string) error {
 		return fmt.Errorf("marshal artifacts: %w", err)
 	}
 
-	return r.setArtifactsJSON(taskID, string(data))
+	return r.SetArtifactsJSON(taskID, string(data))
 }
 
 func (r *TaskRepo) GetArtifacts(taskID string) ([]models.Artifact, error) {

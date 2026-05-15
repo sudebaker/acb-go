@@ -3,7 +3,6 @@ package db
 import (
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/sudebaker/acb-go/internal/models"
 )
@@ -65,7 +64,10 @@ func (r *GateRepo) AnswerGate(gateID, answer string) error {
 	if err != nil {
 		return fmt.Errorf("answer gate: %w", err)
 	}
-	n, _ := r.db.QueryRow("SELECT changes()").Int64()
+	var n int64
+	if err := r.db.QueryRow("SELECT changes()").Scan(&n); err != nil {
+		return fmt.Errorf("check changes: %w", err)
+	}
 	if n == 0 {
 		return fmt.Errorf("gate %s not found or not in 'asked' status", gateID)
 	}
@@ -80,7 +82,10 @@ func (r *GateRepo) ResolveGate(gateID string) error {
 	if err != nil {
 		return fmt.Errorf("resolve gate: %w", err)
 	}
-	n, _ := r.db.QueryRow("SELECT changes()").Int64()
+	var n int64
+	if err := r.db.QueryRow("SELECT changes()").Scan(&n); err != nil {
+		return fmt.Errorf("check changes: %w", err)
+	}
 	if n == 0 {
 		return fmt.Errorf("gate %s not found or not in 'answered' status", gateID)
 	}
