@@ -134,8 +134,8 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 
 	// Filter by required_skills - task must have ALL required skills
 	for _, skill := range requiredSkills {
-		query += " AND skills LIKE ?"
-		args = append(args, fmt.Sprintf(`%"%s"%`, skill))
+		query += " AND required_skills LIKE ?"
+		args = append(args, fmt.Sprintf("%%%s%%", skill))
 	}
 
 	rows, err := r.db.Query(query, args...)
@@ -366,9 +366,6 @@ func (r *TaskRepo) GetPendingByAgent(agent string) ([]models.Task, error) {
 // logTaskEvent registers an event for a task transition
 func (r *TaskRepo) logTaskEvent(taskID, event, agent, detail string) {
 	if r.eventRepo != nil {
-		// Fire and forget, don't block on errors
-		go func() {
-			_ = r.eventRepo.InsertEvent(taskID, event, agent, detail)
-		}()
+		_ = r.eventRepo.InsertEvent(taskID, event, agent, detail)
 	}
 }

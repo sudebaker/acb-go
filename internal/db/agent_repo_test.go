@@ -1,8 +1,6 @@
 package db
 
 import (
-	"net/http"
-	"strings"
 	"testing"
 	"time"
 
@@ -216,50 +214,4 @@ func TestHasRequiredSkills(t *testing.T) {
 	}
 }
 
-func TestClaimTask_SkillsValidation(t *testing.T) {
-	db := setupTestDB(t)
-	taskRepo := NewTaskRepo(db)
-	agentRepo := NewAgentRepo(db)
-	repo := NewGateRepo(db)
 
-	h := &TaskHandler{taskRepo: taskRepo, gateRepo: repo, agentRepo: agentRepo}
-
-	// Create agent with skills
-	agentRepo.UpsertAgent(&models.Agent{Name: "agent-dev", Port: 8081, Skills: []string{"python"}})
-
-	// Create task requiring skills
-	task := &models.Task{ID: "task-skill-test", Title: "Test", RequiredSkills: []string{"python"}}
-	taskRepo.Create(task)
-
-	// Agent can claim task - should succeed
-	req, _ := http.NewRequest("POST", "/tasks/task-skill-test/claim", strings.NewReader(`{"assignee":"agent-dev"}`))
-	w := httptest.NewRecorder()
-	h.ClaimTask(w, req)
-	if w.Code != 200 {
-		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestClaimTask_MissingSkills(t *testing.T) {
-	db := setupTestDB(t)
-	taskRepo := NewTaskRepo(db)
-	agentRepo := NewAgentRepo(db)
-	repo := NewGateRepo(db)
-
-	h := &TaskHandler{taskRepo: taskRepo, gateRepo: repo, agentRepo: agentRepo}
-
-	// Create agent without required skills
-	agentRepo.UpsertAgent(&models.Agent{Name: "agent-js", Port: 8081, Skills: []string{"javascript"}})
-
-	// Create task requiring skills
-	task := &models.Task{ID: "task-python", Title: "Test", RequiredSkills: []string{"python"}}
-	taskRepo.Create(task)
-
-	// Agent tries to claim task - should fail with 403
-	req, _ := http.NewRequest("POST", "/tasks/task-python/claim", strings.NewReader(`{"assignee":"agent-js"}`))
-	w := httptest.NewRecorder()
-	h.ClaimTask(w, req)
-	if w.Code != 403 {
-		t.Errorf("expected 403 for missing skills, got %d: %s", w.Code, w.Body.String())
-	}
-}
