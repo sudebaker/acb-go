@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /acb .
+RUN go mod tidy && go build -o /acb .
 
 FROM alpine:3.19
 RUN apk add --no-cache sqlite

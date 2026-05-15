@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/sudebaker/acb-go/internal/models"
@@ -121,7 +122,7 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 }
 
 func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]models.Task, error) {
-	query := "SELECT id, title, assignee, status FROM tasks WHERE 1=1"
+	query := "SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags, body_goal, body_context, body_deliverable_format, body_deliverable_path, created_at, updated_at, summary, artifacts_json FROM tasks WHERE 1=1"
 	var args []interface{}
 	if status != "" {
 		query += " AND status = ?"
@@ -138,6 +139,7 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 		args = append(args, fmt.Sprintf("%%%s%%", skill))
 	}
 
+	log.Printf("[ACB] List query: %s args: %v", query, args)
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
@@ -147,9 +149,22 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 	var tasks []models.Task
 	for rows.Next() {
 		var t models.Task
-		if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status); err != nil {
+		var parents, skills, reqSkills, tags, artifacts string
+		var createdAt, updatedAt sql.NullString
+		if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status, &t.Priority, &parents, &skills, &reqSkills, &tags, &t.BodyGoal, &t.BodyContext, &t.BodyDeliverableFmt, &t.BodyDeliverablePath, &createdAt, &updatedAt, &t.Summary, &artifacts); err != nil {
 			return nil, fmt.Errorf("scan task row: %w", err)
 		}
+		if createdAt.Valid {
+			t.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt.String)
+		}
+		if updatedAt.Valid {
+			t.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt.String)
+		}
+		_ = json.Unmarshal([]byte(parents), &t.Parents)
+		_ = json.Unmarshal([]byte(skills), &t.Skills)
+		_ = json.Unmarshal([]byte(reqSkills), &t.RequiredSkills)
+		_ = json.Unmarshal([]byte(tags), &t.Tags)
+		_ = json.Unmarshal([]byte(artifacts), &t.Artifacts)
 		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
