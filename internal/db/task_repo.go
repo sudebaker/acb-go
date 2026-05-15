@@ -34,18 +34,31 @@ func (r *TaskRepo) Create(task *models.Task) error {
 	if err != nil {
 		return fmt.Errorf("marshal parents: %w", err)
 	}
+	skills, err := json.Marshal(task.Skills)
+	if err != nil {
+		return fmt.Errorf("marshal skills: %w", err)
+	}
+	requiredSkills, err := json.Marshal(task.RequiredSkills)
+	if err != nil {
+		return fmt.Errorf("marshal required_skills: %w", err)
+	}
+	tags, err := json.Marshal(task.Tags)
+	if err != nil {
+		return fmt.Errorf("marshal tags: %w", err)
+	}
 	artifacts, err := json.Marshal(task.Artifacts)
 	if err != nil {
 		return fmt.Errorf("marshal artifacts: %w", err)
 	}
 
 	_, err = r.db.Exec(
-		`INSERT INTO tasks (id, title, assignee, status, priority, parents,
+		`INSERT INTO tasks (id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
 			summary, artifacts_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.Title, task.Assignee, task.Status, task.Priority,
-		string(parents), task.BodyGoal, task.BodyContext,
+		string(parents), string(skills), string(requiredSkills), string(tags),
+		task.BodyGoal, task.BodyContext,
 		task.BodyDeliverableFmt, task.BodyDeliverablePath,
 		task.Summary, string(artifacts),
 	)
@@ -54,18 +67,19 @@ func (r *TaskRepo) Create(task *models.Task) error {
 
 func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	row := r.db.QueryRow(
-		`SELECT id, title, assignee, status, priority, parents,
+		`SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
 			created_at, summary, artifacts_json
 		FROM tasks WHERE id = ?`, id,
 	)
 
 	task := &models.Task{}
-	var parents, artifacts string
+	var parents, skills, requiredSkills, tags, artifacts string
 	var createdAt string
 	err := row.Scan(
 		&task.ID, &task.Title, &task.Assignee, &task.Status, &task.Priority,
-		&parents, &task.BodyGoal, &task.BodyContext,
+		&parents, &skills, &requiredSkills, &tags,
+		&task.BodyGoal, &task.BodyContext,
 		&task.BodyDeliverableFmt, &task.BodyDeliverablePath,
 		&createdAt, &task.Summary, &artifacts,
 	)
@@ -79,6 +93,15 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	task.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
 	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
 		return nil, fmt.Errorf("unmarshal parents: %w", err)
+	}
+	if err := json.Unmarshal([]byte(skills), &task.Skills); err != nil {
+		return nil, fmt.Errorf("unmarshal skills: %w", err)
+	}
+	if err := json.Unmarshal([]byte(requiredSkills), &task.RequiredSkills); err != nil {
+		return nil, fmt.Errorf("unmarshal required_skills: %w", err)
+	}
+	if err := json.Unmarshal([]byte(tags), &task.Tags); err != nil {
+		return nil, fmt.Errorf("unmarshal tags: %w", err)
 	}
 	if err := json.Unmarshal([]byte(artifacts), &task.Artifacts); err != nil {
 		return nil, fmt.Errorf("unmarshal artifacts: %w", err)

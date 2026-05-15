@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -17,11 +18,18 @@ func NewAgentRepo(db *sql.DB) *AgentRepo {
 }
 
 func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
-	_, err := r.db.Exec(
-		`INSERT INTO agents (name, port, token)
-		VALUES (?, ?, ?)
-		ON CONFLICT(name) DO UPDATE SET port = excluded.port, token = excluded.token`,
-		agent.Name, agent.Port, agent.Token,
+	skills, err := json.Marshal(agent.Skills)
+	if err != nil {
+		return fmt.Errorf("marshal skills: %w", err)
+	}
+	_, err = r.db.Exec(
+		`INSERT INTO agents (name, port, token, last_heartbeat)
+		VALUES (?, ?, ?, ?)
+		ON CONFLICT(name) DO UPDATE SET 
+			port = excluded.port, 
+			token = excluded.token,
+			last_heartbeat = excluded.last_heartbeat`,
+		agent.Name, agent.Port, agent.Token, agent.LastHeartbeat,
 	)
 	return err
 }

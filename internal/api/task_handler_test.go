@@ -62,6 +62,26 @@ func TestCreateTask_201(t *testing.T) {
 	}
 }
 
+func TestCreateTask_WithSkills_201(t *testing.T) {
+	_, r := setupRouter(t)
+	req := authRequest("POST", "/tasks", `{"id":"t002","title":"skill test","skills":["python","go"],"required_skills":["python"],"tags":["api","web"]}`)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 201 {
+		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	// Verify skills are preserved
+	skills, _ := resp["skills"].([]interface{})
+	if len(skills) != 2 {
+		t.Errorf("expected 2 skills, got %d", len(skills))
+	}
+}
+
 func TestCreateTask_MissingTitle_400(t *testing.T) {
 	_, r := setupRouter(t)
 	req := authRequest("POST", "/tasks", `{"id":"t001"}`)
@@ -116,6 +136,28 @@ func TestListTasks_200(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 	if len(resp) != 2 {
 		t.Errorf("expected 2 tasks, got %d", len(resp))
+	}
+}
+
+func TestListTasks_FilteredByRequiredSkills_200(t *testing.T) {
+	d, r := setupRouter(t)
+	taskRepo := db.NewTaskRepo(d)
+	// Create task with required skills
+	taskRepo.Create(&models.Task{ID: "t001", Title: "python task", RequiredSkills: []string{"python"}})
+	taskRepo.Create(&models.Task{ID: "t002", Title: "java task", RequiredSkills: []string{"java"}})
+
+	req := authRequest("GET", "/tasks?required_skills=python", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var resp []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp) != 1 || resp[0]["id"] != "t001" {
+		t.Errorf("expected 1 task with id t001, got %v", resp)
 	}
 }
 

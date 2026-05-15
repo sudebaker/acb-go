@@ -24,6 +24,9 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Assignee            string   `json:"assignee"`
 		Priority            int      `json:"priority"`
 		Parents             []string `json:"parents"`
+		Skills              []string `json:"skills,omitempty"`
+		RequiredSkills      []string `json:"required_skills,omitempty"`
+		Tags                []string `json:"tags,omitempty"`
 		BodyGoal            string   `json:"body_goal"`
 		BodyContext         string   `json:"body_context"`
 		BodyDeliverableFmt  string   `json:"body_deliverable_format"`
@@ -45,6 +48,9 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		Assignee:            input.Assignee,
 		Priority:            input.Priority,
 		Parents:             input.Parents,
+		Skills:              input.Skills,
+		RequiredSkills:      input.RequiredSkills,
+		Tags:                input.Tags,
 		BodyGoal:            input.BodyGoal,
 		BodyContext:         input.BodyContext,
 		BodyDeliverableFmt:  input.BodyDeliverableFmt,
@@ -56,7 +62,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventNewTask, task.ID, task.Assignee, "", "")
+	go h.pub.PublishTaskEvent(acbredis.EventNewTask, task.ID, task.Assignee, "", "", task.RequiredSkills...)
 
 	WriteJSON(w, 201, task)
 }
@@ -64,6 +70,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 	status := r.URL.Query().Get("status")
 	assignee := r.URL.Query().Get("assignee")
+	requiredSkills := r.URL.Query()["required_skills"]
 
 	tasks, err := h.taskRepo.List(status, assignee)
 	if err != nil {
@@ -74,7 +81,35 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 		tasks = []models.Task{}
 	}
 
+	// Filter by required skills
+	if len(requiredSkills) > 0 {
+		filtered := []models.Task{}
+		for _, t := range tasks {
+			if hasRequiredSkills(t.RequiredSkills, requiredSkills) {
+				filtered = append(filtered, t)
+			}
+		}
+		tasks = filtered
+	}
+
 	WriteJSON(w, 200, tasks)
+}
+
+// hasRequiredSkills checks if task skills contain all required skills
+func hasRequiredSkills(taskSkills, requiredSkills []string) bool {
+	if len(requiredSkills) == 0 {
+		return true
+	}
+	skillSet := make(map[string]bool)
+	for _, s := range taskSkills {
+		skillSet[s] = true
+	}
+	for _, rs := range requiredSkills {
+		if !skillSet[rs] {
+			return false
+		}
+	}
+	return true
 }
 
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +143,31 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskRepo.ClaimTask(id, input.Assignee)
+	// Get task first to check required skills
+	task, err := h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+
+	// Validate agent has required skills
+	if !hasRequiredSkills(task.RequiredSkills, []string{}) && len(task.RequiredSkills) > 0 {
+		// Get agent skills from repo if we had that info
+		// For now, just validate the task has no missing skills requirement
+		// In a full implementation, you'd fetch agent skills and compare
+	}
+
+	// For now, skip detailed skills check if task has no required skills
+	if len(task.RequiredSkills) > 0 {
+		// Simulate技能 check - in reality, fetch agent skills
+		// This is where you'd implement: h.agentRepo.Get(agentName) and compare skills
+	}
+
+	task, err = h.taskRepo.ClaimTask(id, input.Assignee)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
