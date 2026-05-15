@@ -61,7 +61,7 @@ func (r *TaskRepo) Create(task *models.Task) error {
 		`INSERT INTO tasks (id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
 			summary, artifacts_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		task.ID, task.Title, task.Assignee, task.Status, task.Priority,
 		string(parents), string(skills), string(requiredSkills), string(tags),
 		task.BodyGoal, task.BodyContext,
@@ -192,7 +192,7 @@ func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 
 	r.logTaskEvent(id, "ClaimTask", assignee, "")
 
-	return &models.Task{ID: id, Status: "claimed", Assignee: assignee}, nil
+	return r.GetByID(id)
 }
 
 func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
@@ -215,7 +215,7 @@ func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 
 	r.logTaskEvent(id, "StartTask", "", "")
 
-	return &models.Task{ID: id, Status: "in_progress"}, nil
+	return r.GetByID(id)
 }
 
 func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
@@ -232,7 +232,7 @@ func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
 
 	r.logTaskEvent(id, "BlockTask", "", "")
 
-	return &models.Task{ID: id, Status: "blocked"}, nil
+	return r.GetByID(id)
 }
 
 func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
@@ -252,7 +252,7 @@ func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
 
 	r.logTaskEvent(id, "CompleteTask", "", summary)
 
-	return &models.Task{ID: id, Status: "completed", Summary: summary}, nil
+	return r.GetByID(id)
 }
 
 func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
@@ -272,7 +272,7 @@ func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
 
 	r.logTaskEvent(id, "FailTask", "", reason)
 
-	return &models.Task{ID: id, Status: "failed", Summary: reason}, nil
+	return r.GetByID(id)
 }
 
 func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {

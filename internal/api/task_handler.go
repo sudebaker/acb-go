@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/google/uuid"
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
 	acbredis "github.com/sudebaker/acb-go/internal/redis"
@@ -41,6 +42,9 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	if input.Title == "" {
 		WriteError(w, 400, "missing_title", "title is required")
 		return
+	}
+	if input.ID == "" {
+		input.ID = uuid.New().String()
 	}
 
 	task := &models.Task{
