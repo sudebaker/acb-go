@@ -38,7 +38,8 @@ CREATE TABLE IF NOT EXISTS agents (
 	name TEXT PRIMARY KEY,
 	port INTEGER NOT NULL DEFAULT 0,
 	token TEXT NOT NULL DEFAULT '',
-	last_heartbeat TEXT
+	last_heartbeat TEXT,
+	skills TEXT NOT NULL DEFAULT '[]'
 );
 
 CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);

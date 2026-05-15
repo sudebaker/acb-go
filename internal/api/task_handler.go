@@ -12,9 +12,10 @@ import (
 )
 
 type TaskHandler struct {
-	taskRepo *db.TaskRepo
-	gateRepo *db.GateRepo
-	pub      *acbredis.Publisher
+\ttaskRepo   *db.TaskRepo
+\tgateRepo   *db.GateRepo
+\tagentRepo  *db.AgentRepo
+\tpub        *acbredis.Publisher
 }
 
 func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -68,50 +69,23 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
-	status := r.URL.Query().Get("status")
-	assignee := r.URL.Query().Get("assignee")
-	requiredSkills := r.URL.Query()["required_skills"]
+\tstatus := r.URL.Query().Get("status")
+\tassignee := r.URL.Query().Get("assignee")
+\trequiredSkills := r.URL.Query()["required_skills"]
 
-	tasks, err := h.taskRepo.List(status, assignee)
-	if err != nil {
-		WriteError(w, 500, "list_failed", err.Error())
-		return
-	}
-	if tasks == nil {
-		tasks = []models.Task{}
-	}
+\ttasks, err := h.taskRepo.List(status, assignee, requiredSkills...)
+\tif err != nil {
+\t\tWriteError(w, 500, "list_failed", err.Error())
+\t\treturn
+\t}
+\tif tasks == nil {
+\t\ttasks = []models.Task{}
+\t}
 
-	// Filter by required skills
-	if len(requiredSkills) > 0 {
-		filtered := []models.Task{}
-		for _, t := range tasks {
-			if hasRequiredSkills(t.RequiredSkills, requiredSkills) {
-				filtered = append(filtered, t)
-			}
-		}
-		tasks = filtered
-	}
-
-	WriteJSON(w, 200, tasks)
+\tWriteJSON(w, 200, tasks)
 }
 
-// hasRequiredSkills checks if task skills contain all required skills
-func hasRequiredSkills(taskSkills, requiredSkills []string) bool {
-	if len(requiredSkills) == 0 {
-		return true
-	}
-	skillSet := make(map[string]bool)
-	for _, s := range taskSkills {
-		skillSet[s] = true
-	}
-	for _, rs := range requiredSkills {
-		if !skillSet[rs] {
-			return false
-		}
-	}
-	return true
-}
-
+// GetTask returns a single task by ID
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
@@ -155,16 +129,36 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate agent has required skills
-	if !hasRequiredSkills(task.RequiredSkills, []string{}) && len(task.RequiredSkills) > 0 {
-		// Get agent skills from repo if we had that info
-		// For now, just validate the task has no missing skills requirement
-		// In a full implementation, you'd fetch agent skills and compare
-	}
-
-	// For now, skip detailed skills check if task has no required skills
 	if len(task.RequiredSkills) > 0 {
-		// Simulate技能 check - in reality, fetch agent skills
-		// This is where you'd implement: h.agentRepo.Get(agentName) and compare skills
+		agent, err := h.agentRepo.GetByName(input.Assignee)
+		if err != nil {
+			WriteError(w, 500, "get_agent_failed", err.Error())
+			return
+		}
+		if agent == nil {
+			WriteError(w, 404, "agent_not_found", "agent not found")
+			return
+		}
+
+		// Check if agent has all required skills
+		hasSkills := true
+		for _, req := range task.RequiredSkills {
+			found := false
+			for _, skill := range agent.Skills {
+				if skill == req {
+					found = true
+					break
+				}
+			}
+			if !found {
+				hasSkills = false
+				break
+			}
+		}
+		if !hasSkills {
+			WriteError(w, 403, "missing_skills", "agent lacks required skills")
+			return
+		}
 	}
 
 	task, err = h.taskRepo.ClaimTask(id, input.Assignee)
@@ -178,7 +172,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskClaimed, id, input.Assignee, "", "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskClaimed, id, input.Assignee, "", "", task.RequiredSkills...)
 
 	WriteJSON(w, 200, task)
 }

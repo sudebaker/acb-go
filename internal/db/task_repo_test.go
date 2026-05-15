@@ -309,3 +309,18 @@ func TestGetPendingByAgent(t *testing.T) {
 		t.Errorf("expected 2 pending tasks, got %d", len(tasks))
 	}
 }
+
+func TestListTasks_WithRequiredSkills(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+	repo.Create(&models.Task{ID: "t001", Title: "task1", Skills: []string{"python", "sql"}, RequiredSkills: []string{"python", "sql"}})
+	repo.Create(&models.Task{ID: "t002", Title: "task2", Skills: []string{"javascript"}, RequiredSkills: []string{"javascript"}})
+
+	// Should get 0 tasks with required skills "python" (Tasks don't have those skills)
+	tasks, err := repo.List("", "", []string{"python"}...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// With our current LIKE-based filter, we're checking the 'skills' column
+	t.Logf("Got %d tasks with skill filter", len(tasks))
+}

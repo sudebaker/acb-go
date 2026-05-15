@@ -113,7 +113,7 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	return task, nil
 }
 
-func (r *TaskRepo) List(status, assignee string) ([]models.Task, error) {
+func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]models.Task, error) {
 	query := "SELECT id, title, assignee, status FROM tasks WHERE 1=1"
 	var args []interface{}
 	if status != "" {
@@ -123,6 +123,12 @@ func (r *TaskRepo) List(status, assignee string) ([]models.Task, error) {
 	if assignee != "" {
 		query += " AND assignee = ?"
 		args = append(args, assignee)
+	}
+
+	// Filter by required_skills - task must have ALL required skills
+	for _, skill := range requiredSkills {
+		query += " AND skills LIKE ?"
+		args = append(args, fmt.Sprintf(`%"%s"%`, skill))
 	}
 
 	rows, err := r.db.Query(query, args...)

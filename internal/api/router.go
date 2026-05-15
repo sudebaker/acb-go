@@ -29,7 +29,7 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	})
 
 	if taskRepo != nil && gateRepo != nil {
-		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo, pub: pub}
+		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo, agentRepo: agentRepo, pub: pub}
 		r.Post("/tasks", h.CreateTask)
 		r.Get("/tasks", h.ListTasks)
 		r.Get("/tasks/{id}", h.GetTask)
