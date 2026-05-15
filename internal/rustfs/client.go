@@ -16,6 +16,7 @@ type ObjectStore interface {
 	Exists(ctx context.Context, key string) (bool, error)
 	BucketExists(ctx context.Context) (bool, error)
 	MakeBucket(ctx context.Context) error
+	ListObjects(ctx context.Context, prefix string) ([]string, error)
 }
 
 type Client struct {
@@ -95,4 +96,21 @@ func (c *Client) EnsureBucket(ctx context.Context) error {
 		return s.MakeBucket(ctx)
 	}
 	return nil
+}
+
+func (c *Client) Enabled() bool {
+	return c.enabled
+}
+
+func (c *Client) MaxUploadSizeBytes() int {
+	// Default is 32MB
+	return 32 * 1024 * 1024
+}
+
+func (c *Client) ListObjects(ctx context.Context, prefix string) ([]string, error) {
+	s := c.enabledOp()
+	if s == nil {
+		return nil, errors.New("rustfs not enabled")
+	}
+	return s.ListObjects(ctx, prefix)
 }

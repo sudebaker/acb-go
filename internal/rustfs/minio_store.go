@@ -90,3 +90,20 @@ func (s *minioStore) MakeBucket(ctx context.Context) error {
 	}
 	return nil
 }
+
+func (s *minioStore) ListObjects(ctx context.Context, prefix string) ([]string, error) {
+	objects := s.client.ListObjects(ctx, s.bucket, minio.ListObjectsOptions{
+		Prefix:    prefix,
+		Recursive: true,
+	})
+
+	var keys []string
+	for obj := range objects {
+		if obj.Err != nil {
+			return nil, fmt.Errorf("list objects: %w", obj.Err)
+		}
+		keys = append(keys, obj.Key)
+	}
+	return keys, nil
+}
+

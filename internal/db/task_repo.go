@@ -19,11 +19,17 @@ func (e *ConflictError) Error() string {
 }
 
 type TaskRepo struct {
-	db *sql.DB
+	db           *sql.DB
+	eventRepo    *TaskEventRepo
 }
 
 func NewTaskRepo(db *sql.DB) *TaskRepo {
-	return &TaskRepo{db: db}
+	eventRepo := NewTaskEventRepo(db)
+	return &TaskRepo{db: db, eventRepo: eventRepo}
+}
+
+func (r *TaskRepo) WithEventRepo(eventRepo *TaskEventRepo) {
+	r.eventRepo = eventRepo
 }
 
 func (r *TaskRepo) Create(task *models.Task) error {
@@ -69,19 +75,19 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	row := r.db.QueryRow(
 		`SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
-			created_at, summary, artifacts_json
+			created_at, updated_at, summary, artifacts_json
 		FROM tasks WHERE id = ?`, id,
 	)
 
 	task := &models.Task{}
 	var parents, skills, requiredSkills, tags, artifacts string
-	var createdAt string
+	var createdAt, updatedAt string
 	err := row.Scan(
 		&task.ID, &task.Title, &task.Assignee, &task.Status, &task.Priority,
 		&parents, &skills, &requiredSkills, &tags,
 		&task.BodyGoal, &task.BodyContext,
 		&task.BodyDeliverableFmt, &task.BodyDeliverablePath,
-		&createdAt, &task.Summary, &artifacts,
+		&createdAt, &updatedAt, &task.Summary, &artifacts,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -91,6 +97,7 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	}
 
 	task.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
+	task.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
 	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
 		return nil, fmt.Errorf("unmarshal parents: %w", err)
 	}
@@ -149,7 +156,10 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 }
 
 func (r *TaskRepo) UpdateStatus(id, status string) error {
-	res, err := r.db.Exec("UPDATE tasks SET status = ? WHERE id = ?", status, id)
+	res, err := r.db.Exec(
+		`UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+		status, id,
+	)
 	if err != nil {
 		return fmt.Errorf("update status: %w", err)
 	}
@@ -157,6 +167,8 @@ func (r *TaskRepo) UpdateStatus(id, status string) error {
 	if n == 0 {
 		return fmt.Errorf("task %s not found", id)
 	}
+	// Log a generic event for status updates not covered by specific methods
+	r.logTaskEvent(id, "UpdateStatus", "", "")
 	return nil
 }
 
@@ -177,6 +189,8 @@ func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 		}
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in pending status"}
 	}
+
+	r.logTaskEvent(id, "ClaimTask", assignee, "")
 
 	return &models.Task{ID: id, Status: "claimed", Assignee: assignee}, nil
 }
@@ -199,6 +213,8 @@ func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in claimed status"}
 	}
 
+	r.logTaskEvent(id, "StartTask", "", "")
+
 	return &models.Task{ID: id, Status: "in_progress"}, nil
 }
 
@@ -213,11 +229,14 @@ func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
 		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress or claimed status"}
 	}
+
+	r.logTaskEvent(id, "BlockTask", "", "")
+
 	return &models.Task{ID: id, Status: "blocked"}, nil
 }
 
 func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = ? WHERE id = ? AND status = 'in_progress'", summary, id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = ?, updated_at = datetime('now') WHERE id = ? AND status = 'in_progress'", summary, id)
 	if err != nil {
 		return nil, fmt.Errorf("complete task: %w", err)
 	}
@@ -230,11 +249,14 @@ func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
 		}
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress status"}
 	}
+
+	r.logTaskEvent(id, "CompleteTask", "", summary)
+
 	return &models.Task{ID: id, Status: "completed", Summary: summary}, nil
 }
 
 func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = ? WHERE id = ? AND status = 'in_progress'", reason, id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = ?, updated_at = datetime('now') WHERE id = ? AND status = 'in_progress'", reason, id)
 	if err != nil {
 		return nil, fmt.Errorf("fail task: %w", err)
 	}
@@ -247,6 +269,9 @@ func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
 		}
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress status"}
 	}
+
+	r.logTaskEvent(id, "FailTask", "", reason)
+
 	return &models.Task{ID: id, Status: "failed", Summary: reason}, nil
 }
 
@@ -336,4 +361,14 @@ func (r *TaskRepo) GetArtifacts(taskID string) ([]models.Artifact, error) {
 
 func (r *TaskRepo) GetPendingByAgent(agent string) ([]models.Task, error) {
 	return r.List("pending", "")
+}
+
+// logTaskEvent registers an event for a task transition
+func (r *TaskRepo) logTaskEvent(taskID, event, agent, detail string) {
+	if r.eventRepo != nil {
+		// Fire and forget, don't block on errors
+		go func() {
+			_ = r.eventRepo.InsertEvent(taskID, event, agent, detail)
+		}()
+	}
 }

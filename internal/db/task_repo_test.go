@@ -4,10 +4,9 @@ import (
 	"database/sql"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/sudebaker/acb-go/internal/models"
-
-	_ "github.com/mattn/go-sqlite3"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -48,6 +47,13 @@ func TestCreateAndGetTask(t *testing.T) {
 	if got.Status != "pending" {
 		t.Errorf("expected status 'pending', got %q", got.Status)
 	}
+	// Verify created_at exists
+	if got.CreatedAt.IsZero() {
+		t.Errorf("created_at should be set")
+	}
+	if got.UpdatedAt.IsZero() {
+		t.Errorf("updated_at should be set")
+	}
 }
 
 func TestClaimTask_Valid(t *testing.T) {
@@ -61,6 +67,10 @@ func TestClaimTask_Valid(t *testing.T) {
 	task, _ := repo.GetByID("t001")
 	if task.Status != "claimed" || task.Assignee != "worker-a" {
 		t.Errorf("got status=%q assignee=%q", task.Status, task.Assignee)
+	}
+	// Verify update_at changed after claim
+	if task.UpdatedAt.IsZero() {
+		t.Errorf("updated_at should be set after claim")
 	}
 }
 
@@ -323,4 +333,150 @@ func TestListTasks_WithRequiredSkills(t *testing.T) {
 	}
 	// With our current LIKE-based filter, we're checking the 'skills' column
 	t.Logf("Got %d tasks with skill filter", len(tasks))
+}
+
+// Tests for task events
+func TestTaskEventRepo(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskEventRepo(db)
+
+	// Insert test events
+	err := repo.InsertEvent("task-001", "ClaimTask", "agent-alpha", "")
+	if err != nil {
+		t.Fatalf("failed to insert event: %v", err)
+	}
+
+	err = repo.InsertEvent("task-001", "StartTask", "", "started processing")
+	if err != nil {
+		t.Fatalf("failed to insert second event: %v", err)
+	}
+
+	// List events
+	events, err := repo.ListByTask("task-001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+
+	if len(events) != 2 {
+		t.Fatalf("expected 2 events, got %d", len(events))
+	}
+
+	// Verify events content - ListByTask orders by timestamp DESC
+	if events[0].Event != "StartTask" || events[1].Event != "ClaimTask" {
+		t.Errorf("events not in expected order: %v", events)
+	}
+
+	// Test non-existent task
+	events, err = repo.ListByTask("nonexistent")
+	if err != nil {
+		t.Fatalf("unexpected error for nonexistent task: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected 0 events for nonexistent task, got %d", len(events))
+	}
+}
+
+// Test gate timestamps
+func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewGateRepo(db)
+
+	gate := &models.Gate{
+		GateID: "gate-001",
+		TaskID: "task-001",
+		Question: "Is this valid?",
+		Ask: "human",
+		Status: "pending",
+	}
+
+	err := repo.CreateGate(gate)
+	if err != nil {
+		t.Fatalf("failed to create gate: %v", err)
+	}
+
+	// Gate should have created_at
+	gates, err := repo.GetByTaskID("task-001")
+	if err != nil {
+		t.Fatalf("failed to get gates: %v", err)
+	}
+	if len(gates) != 1 {
+		t.Fatalf("expected 1 gate, got %d", len(gates))
+	}
+	if gates[0].CreatedAt == "" {
+		t.Errorf("createdAt should be set")
+	}
+	if gates[0].AnsweredAt != nil {
+		t.Errorf("answeredAt should be nil initially")
+	}
+
+	// Answer the gate
+	err = repo.AnswerGate("gate-001", "Yes, it is valid")
+	if err != nil {
+		t.Fatalf("failed to answer gate: %v", err)
+	}
+
+	// Check answered_at is set
+	gates, err = repo.GetByTaskID("task-001")
+	if err != nil {
+		t.Fatalf("failed to get gates: %v", err)
+	}
+	if gates[0].AnsweredAt == nil || *gates[0].AnsweredAt == "" {
+		t.Errorf("answeredAt should be set after answering")
+	}
+}
+
+// Test that task events are logged on state transitions
+func TestTaskEventsLoggedOnTransitions(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+
+	// Create task
+	task := &models.Task{ID: "t_events_001", Title: "test event logging"}
+	err := repo.Create(task)
+	if err != nil {
+		t.Fatalf("failed to create task: %v", err)
+	}
+
+	// Claim task - should log event
+	task, err = repo.ClaimTask("t_events_001", "agent-alpha")
+	if err != nil {
+		t.Fatalf("failed to claim task: %v", err)
+	}
+
+	// Check events
+	events, err := repo.eventRepo.ListByTask("t_events_001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) != 1 || events[0].Event != "ClaimTask" {
+		t.Errorf("expected 1 ClaimTask event, got %v", events)
+	}
+
+	// Start task - should log event
+	task, err = repo.StartTask("t_events_001")
+	if err != nil {
+		t.Fatalf("failed to start task: %v", err)
+	}
+
+	events, err = repo.eventRepo.ListByTask("t_events_001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) != 2 {
+		t.Errorf("expected 2 events after start, got %d", len(events))
+	}
+
+	// Block task - should log event
+	task, err = repo.BlockTask("t_events_001")
+	if err != nil {
+		t.Fatalf("failed to block task: %v", err)
+	}
+
+	events, err = repo.eventRepo.ListByTask("t_events_001")
+	if err != nil {
+		t.Fatalf("failed to list events: %v", err)
+	}
+	if len(events) != 3 {
+		t.Errorf("expected 3 events after block, got %d", len(events))
+	}
 }

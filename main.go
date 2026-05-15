@@ -37,6 +37,8 @@ func main() {
 	taskRepo := db.NewTaskRepo(database)
 	gateRepo := db.NewGateRepo(database)
 	agentRepo := db.NewAgentRepo(database)
+	eventRepo := db.NewTaskEventRepo(database)
+	taskRepo.WithEventRepo(eventRepo)
 	pub := acbredis.NewPublisher(rdb)
 
 	rustfsClient := rustfs.NewClient(

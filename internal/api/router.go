@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
 	acbredis "github.com/sudebaker/acb-go/internal/redis"
 	"github.com/sudebaker/acb-go/internal/rustfs"
@@ -42,10 +43,11 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	}
 
 	if rustfsClient != nil && taskRepo != nil {
-		ah := &ArtifactHandler{taskRepo: taskRepo, rustfs: rustfsClient}
+		ah := &ArtifactHandler{taskRepo: taskRepo, rustfs: rustfsClient, cfg: config.Load()}
 		r.Post("/tasks/{id}/artifacts", ah.UploadArtifact)
 		r.Get("/tasks/{id}/artifacts", ah.DispatchListOrDownload)
 		r.Delete("/tasks/{id}/artifacts", ah.DeleteArtifact)
+		r.Post("/tasks/{id}/artifacts/cleanup", ah.CleanupArtifacts)
 	}
 
 	if agentRepo != nil {

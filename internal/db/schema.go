@@ -20,6 +20,7 @@ CREATE TABLE IF NOT EXISTS tasks (
 	body_deliverable_format TEXT NOT NULL DEFAULT 'markdown',
 	body_deliverable_path TEXT NOT NULL DEFAULT '',
 	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
 	summary TEXT NOT NULL DEFAULT '',
 	artifacts_json TEXT NOT NULL DEFAULT '[]'
 );
@@ -31,7 +32,9 @@ CREATE TABLE IF NOT EXISTS gates (
 	ask TEXT NOT NULL DEFAULT 'human',
 	status TEXT NOT NULL DEFAULT 'pending'
 		CHECK(status IN ('pending','asked','answered','resolved')),
-	answer TEXT NOT NULL DEFAULT ''
+	answer TEXT NOT NULL DEFAULT '',
+	created_at TEXT NOT NULL DEFAULT (datetime('now')),
+	answered_at TEXT DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS agents (
@@ -42,6 +45,16 @@ CREATE TABLE IF NOT EXISTS agents (
 	skills TEXT NOT NULL DEFAULT '[]'
 );
 
+CREATE TABLE IF NOT EXISTS task_events (
+	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	task_id TEXT NOT NULL REFERENCES tasks(id),
+	event TEXT NOT NULL,
+	agent TEXT NOT NULL,
+	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+	detail TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
 `
 
