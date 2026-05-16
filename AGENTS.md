@@ -1,7 +1,7 @@
 # AGENTS — acb-go
 
 ## What this is
-Agent Communication Bus (ACB): a Go REST service that orchestrates tasks between autonomous agents and a central orchestrator.
+Agent Communication Bus (ACB): a Go REST service that orchestrates tasks between autonomous agents and a central orchestrator, with automatic webhook dispatch and smart polling fallback.
 
 ## Architecture (3 pillars)
 - **SQLite** (`/var/lib/acb/acb.db`) — durable state: tasks, gates, agents
@@ -16,28 +16,37 @@ Go 1.22+, `go-sqlite3`, `chi/v5`, `go-redis/v9`, `google/uuid`, `godotenv`
 - **Single DB connection**: `SetMaxOpenConns(1)` (SQLite single-writer)
 - **Auth**: Bearer token per agent, validated against `agents` table; `/health` is public
 - **Skills**: Agents have skills set at deployment time; tasks declare `required_skills` → ACB validates on claim (403 if insufficient)
-- **Redis events**: fire-and-forget via goroutine, non-blocking; channels: `tasks:pending`, `agent:<name>`, `tasks:gates`
+- **Dispatch**: Hybrid push webhook + pull polling. ACB matches agents by skills and POSTs to `webhook_url` on task creation. Failed webhooks retry via Redis list with exponential backoff. `GET /tasks/dispatch` for agents that prefer polling.
+- **SSRF protection**: Webhook URLs validated at registration — private IPs rejected, scheme enforced, DNS resolution checked.
 - **Task states**: `pending → claimed → in_progress → blocked → completed/failed`
-- **Env vars**: `ACB_PORT`, `ACB_DB_PATH`, `ACB_REDIS_ADDR`, `ACB_REDIS_PASS`, `ACB_RUSTFS_ENDPOINT`, `ACB_RUSTFS_BUCKET`, `ACB_LOG_LEVEL`
+- **Env vars**: `ACB_PORT`, `ACB_DB_PATH`, `ACB_REDIS_ADDR`, `ACB_REDIS_PASS`, `ACB_RUSTFS_ENDPOINT`, `ACB_RUSTFS_BUCKET`, `ACB_MAX_UPLOAD_SIZE_MB`, `ACB_ARTIFACT_TTL_DAYS`, `ACB_LOG_LEVEL`
 
 ## Directory structure
 ```
-main.go                  — entry point, wires DB → repos → Redis → router → HTTP
+main.go                  — entry point, wires DB → repos → Redis → dispatcher → router → HTTP
 internal/
   config/                — env loader (config.Load())
   db/                    — SQLite Open/ path, RunMigrations, TaskRepo, GateRepo, AgentRepo
   api/                   — NewRouter, chi handlers, response helpers, AuthMiddleware
-  redis/                 — NewPublisher, PublishTaskEvent (fire-and-forget)
+  dispatcher/             — webhook push dispatcher with SSRF validation + retry queue
+    dispatcher.go        — Dispatcher struct, DispatchToAgents(), retry goroutine
+    validator.go         — SSRF validation (private IP denylist, scheme check, DNS resolution)
+    dispatcher_test.go   — unit tests for dispatch and validation
   models/                — Task, Gate, Agent structs
+  redis/                 — NewPublisher, PublishTaskEvent (fire-and-forget)
 tests/
   e2e_test.go            — full task lifecycle integration test
+docs/
+  api-reference.md       — complete API documentation
+  agent-integration.md   — agent developer guide
+  dispatcher-architecture.md — dispatch design decision record
 ```
 
 ## Commands
 ```bash
-go test ./...               # all tests (24 db + 20 api + 3 redis + 1 e2e)
+go test ./...               # all tests (db + api + redis + dispatcher + e2e)
 go test ./internal/db/ -v   # repository tests (single-writer SQLite)
-go test ./internal/api/ -v  # handler + auth tests
+go test ./internal/api/ -v  # handler + auth + rate limiter tests
 go test ./tests/ -v          # e2e lifecycle test
 go build ./...               # verify compilation
 ```
@@ -47,6 +56,13 @@ go build ./...               # verify compilation
 - API tests register a test agent (`test-agent` / `test-token`) for auth; use `authRequest()` helper
 - Redis tests are nil-safe (no Redis server needed for CI)
 - e2e test does NOT require Redis or RustFS (publisher handles nil client)
+
+## Security notes
+- Webhook URL validation prevents SSRF (rejects private IPs, enforces http/https scheme)
+- Agent registration checks X-Agent-Name to prevent token overwrite
+- HMAC webhook signatures include timestamp for replay protection
+- Tokens stored in plaintext (S01 — needs Argon2id hashing)
+- Redis has no auth by default (S03 — needs ACB_REDIS_PASS requirement)
 
 ## Prerequisites
 - Go 1.22+ (CGO required for `go-sqlite3`)

@@ -117,6 +117,27 @@ Returns empty array `[]` when no tasks match.
 
 ---
 
+### `GET /tasks/dispatch`
+
+Get the next best-matching pending task for an agent. Smart polling endpoint for agents without webhook capability.
+
+**Auth:** Bearer token required
+
+**Query parameters:** `?agent=<name>`
+
+Returns the highest-priority pending task whose `required_skills` are a subset of the agent's skills. Marks the task as `dispatched` to prevent duplicate assignment.
+
+**Response `200`:** Full task object (same as GET /tasks/:id)
+
+**Response `204`:** No matching tasks available
+
+**Response `400`:**
+```json
+{"error": "missing_agent", "message": "agent query parameter is required"}
+```
+
+---
+
 ### `GET /tasks/:id`
 
 Get a single task by ID.
@@ -271,6 +292,43 @@ Mark a task as failed with a reason. Only allowed from `in_progress`.
 
 ## Agents
 
+### `POST /agents`
+
+Register or update an agent with webhook URL for task dispatch.
+
+**Auth:** Bearer token required. Agents can only register themselves (X-Agent-Name must match).
+
+**Request body:**
+```json
+{
+  "name": "braulio",
+  "port": 8645,
+  "token": "braulio-token",
+  "skills": ["go", "testing", "devops"],
+  "webhook_url": "http://localhost:8645/webhooks/amanda",
+  "webhook_secret": "<WEBHOOK_SECRET>"
+}
+```
+
+**Security:** Webhook URLs are validated at registration:
+- Must use `http://` or `https://` scheme
+- Resolved IPs are checked against private ranges (RFC 1918, loopback, link-local)
+- Prevents SSRF attacks via internal network access
+
+**Response `200`:** Agent object (token redacted)
+
+**Response `403`:**
+```json
+{"error": "forbidden", "message": "agent can only register itself"}
+```
+
+**Response `400`:**
+```json
+{"error": "invalid_webhook_url", "message": "webhook URL rejected: resolves to private IP"}
+```
+
+---
+
 ### `POST /agents/heartbeat`
 
 Send a heartbeat signal for an agent. Rate-limited to 10 requests per minute per agent.
@@ -418,6 +476,10 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 | `empty_file` | 400 | Uploaded file is empty |
 | `missing_key` | 400 | Key query parameter required |
 | `invalid_form` | 400 | Malformed multipart form |
+| `invalid_webhook_url` | 400 | Webhook URL validation failed (SSRF, invalid scheme) |
+| `ssrf_blocked` | 400 | Webhook URL resolves to private/blocked IP |
+| `forbidden` | 403 | Agent attempted to register with a different name |
+| `dispatch_failed` | 500 | Webhook dispatch to agent failed (logged, retried) |
 | `unauthorized` | 401 | Missing or invalid Bearer token |
 | `insufficient_skills` | 403 | Agent lacks required skills for task |
 | `not_found` | 404 | Resource not found |
@@ -440,6 +502,53 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 | `update_failed` | 500 | Internal error updating resource |
 | `check_failed` | 500 | Internal error checking artifact |
 | `agent_not_found` | 404 | Agent not registered |
+
+---
+
+## Webhook Dispatch
+
+When a task is created, ACB automatically dispatches it to matching agents via their `webhook_url`.
+
+### Flow
+
+```
+Task Created → Match agents by required_skills → POST to each agent's webhook_url
+              ↓ (if webhook fails)                ↓ (success)
+         Queue in Redis for retry          Agent receives task notification
+              ↓ (goroutine, exponential backoff)
+         Retry up to 5 times (5s, 25s, 125s)
+              ↓ (all retries exhausted)
+         Mark as dispatch_failed (agent can still poll)
+```
+
+### Webhook Payload
+
+```json
+{
+  "action": "new_task",
+  "task": {
+    "id": "...",
+    "title": "...",
+    "required_skills": ["go"],
+    "body_goal": "..."
+  },
+  "timestamp": "2026-05-16T21:00:00Z"
+}
+```
+
+### Signature Verification
+
+Each webhook POST includes two headers:
+- `X-Webhook-Signature`: HMAC-SHA256(webhook_secret, timestamp + "." + body) as hex
+- `X-Webhook-Timestamp`: Unix timestamp of the dispatch
+
+Receivers should:
+1. Reject if `|current_time - timestamp| > 5 minutes` (replay protection)
+2. Recompute HMAC: `SHA256(secret, timestamp + "." + body)` and compare with `X-Webhook-Signature`
+
+### Agent Registration for Dispatch
+
+Agents must register with a `webhook_url` and `webhook_secret` via `POST /agents`. See the Agents section above.
 
 ---
 
@@ -469,24 +578,34 @@ Events are fire-and-forget via goroutines. Redis publish errors are logged but n
 
 ```bash
 # Create a task with skill requirements
-curl -s -X POST http://localhost:8080/tasks \
+curl -s -X POST http://localhost:8090/tasks \
   -H "Authorization: Bearer test-token" \
   -H "Content-Type: application/json" \
   -d '{"id":"t001","title":"test","required_skills":["python","linux"],"priority":3}'
 
 # Claim a task
-curl -s -X POST http://localhost:8080/tasks/t001/claim \
+curl -s -X POST http://localhost:8090/tasks/t001/claim \
   -H "Authorization: Bearer test-token" \
   -H "Content-Type: application/json" \
   -d '{"assignee":"agent-alpha"}'
 
 # Send heartbeat
-curl -s -X POST http://localhost:8080/agents/heartbeat \
+curl -s -X POST http://localhost:8090/agents/heartbeat \
   -H "Authorization: Bearer test-token" \
   -H "Content-Type: application/json" \
   -d '{"name":"agent-alpha"}'
 
 # List pending tasks matching agent skills
-curl -s "http://localhost:8080/tasks?status=pending" \
+curl -s "http://localhost:8090/tasks?status=pending" \
   -H "Authorization: Bearer test-token"
+
+# Register an agent with webhook URL
+curl -s -X POST http://localhost:8090/agents \
+  -H "Authorization: Bearer braulio-token" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"braulio","port":8645,"token":"braulio-token","skills":["go","testing"],"webhook_url":"http://localhost:8645/webhooks/amanda","webhook_secret":"<WEBHOOK_SECRET>"}'
+
+# Get next matching task for polling
+curl -s "http://localhost:8090/tasks/dispatch?agent=braulio" \
+  -H "Authorization: Bearer braulio-token"
 ```
