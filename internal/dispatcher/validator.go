@@ -103,12 +103,14 @@ func ValidateWebhookURL(rawURL string) error {
 // - Disabled redirects (prevents SSRF via 302 to internal hosts)
 // - Separate connect timeout (5s) + overall timeout (15s)
 func NewSafeHTTPClient() *http.Client {
-	rt := &http.Transport{
-		DisableRedirects: true,
-	}
+	rt := &http.Transport{}
 	return &http.Client{
 		Timeout:   15 * time.Second,
 		Transport: rt,
+		// Prevent SSRF via 302 redirects to internal hosts
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
 	}
 }
 

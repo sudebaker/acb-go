@@ -1,23 +1,20 @@
 package db
 
 import (
-	"crypto/argon2"
 	"crypto/rand"
 	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"fmt"
-	"time"
 
-	"github.com/sudebaker/acb-go/internal/models"
+	"golang.org/x/crypto/argon2"
 )
 
 const (
-	// Argon2 parameters (tunable, match OWASP recommendations)
-			argon2Time    = 3    // 3 passes
-			argon2Memory  = 64 * 1024 // 64 MB
-			argon2Threads = 4
-			argon2KeyLen  = 32
+	// Argon2 parameters (OWASP recommendations)
+	argon2Time    = 3            // 3 passes
+	argon2Memory  = 64 * 1024   // 64 MB
+	argon2Threads = 4
+	argon2KeyLen  = 32
 )
 
 // hashToken creates an Argon2id hash of the token with a random salt.
@@ -30,7 +27,7 @@ func hashToken(token string) (string, error) {
 
 	hash := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
 
-	// Encode as base64:盐|hash (separated by | for parsing)
+	// Encode as base64: salt + hash concatenated
 	result := make([]byte, len(salt)+len(hash))
 	copy(result[:len(salt)], salt)
 	copy(result[len(salt):], hash)
@@ -39,6 +36,7 @@ func hashToken(token string) (string, error) {
 }
 
 // verifyToken checks if a token matches the stored hash.
+// Uses constant-time comparison to prevent timing attacks.
 func verifyToken(token, storedHash string) (bool, error) {
 	decoded, err := base64.StdEncoding.DecodeString(storedHash)
 	if err != nil {

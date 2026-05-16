@@ -360,3 +360,25 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 
 	WriteJSON(w, 200, task)
 }
+
+// DispatchNext returns the best-matching pending task for the requesting agent.
+// GET /tasks/dispatch?agent=<name>
+func (h *TaskHandler) DispatchNext(w http.ResponseWriter, r *http.Request) {
+	agentName := r.URL.Query().Get("agent")
+	if agentName == "" {
+		WriteError(w, 400, "missing_agent", "agent query parameter is required")
+		return
+	}
+
+	task, err := dispatcher.FindNextForAgent(h.agentRepo, h.taskRepo, agentName)
+	if err != nil {
+		WriteError(w, 500, "dispatch_failed", err.Error())
+		return
+	}
+	if task == nil {
+		w.WriteHeader(204)
+		return
+	}
+
+	WriteJSON(w, 200, task)
+}

@@ -1,71 +1,13 @@
 package db
 
 import (
-	"crypto/argon2"
-	"crypto/rand"
 	"database/sql"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"time"
 
 	"github.com/sudebaker/acb-go/internal/models"
 )
-
-const (
-	// Argon2id parameters (tunable, match OWASP recommendations)
-	argon2Time    = 3    // 3 passes
-	argon2Memory  = 64 * 1024 // 64 MB
-	argon2Threads = 4
-	argon2KeyLen  = 32
-)
-
-// hashToken creates an Argon2id hash of the token with a random salt.
-// Returns base64-encoded hash string in format: base64(salt|hash).
-func hashToken(token string) (string, error) {
-	salt := make([]byte, 16)
-	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("generate salt: %w", err)
-	}
-
-	hash := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
-
-	// Encode as base64: salt|hash (separated by | for parsing)
-	result := make([]byte, len(salt)+len(hash))
-	copy(result[:len(salt)], salt)
-	copy(result[len(salt):], hash)
-
-	return base64.StdEncoding.EncodeToString(result), nil
-}
-
-// verifyToken checks if a token matches the stored hash.
-func verifyToken(token, storedHash string) (bool, error) {
-	decoded, err := base64.StdEncoding.DecodeString(storedHash)
-	if err != nil {
-		return false, fmt.Errorf("decode hash: %w", err)
-	}
-
-	if len(decoded) < 16+32 { // salt + min hash
-		return false, fmt.Errorf("invalid hash length")
-	}
-
-	salt := decoded[:16]
-	hash := decoded[16:]
-
-	expected := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
-
-	if len(expected) != len(hash) {
-		return false, fmt.Errorf("hash mismatch")
-	}
-
-	// Constant-time comparison to prevent timing attacks
-	match := true
-	for i := range expected {
-		match = match && (expected[i] == hash[i])
-	}
-
-	return match, nil
-}
 
 type AgentRepo struct {
 	db *sql.DB
@@ -142,28 +84,48 @@ func (r *AgentRepo) UpdateHeartbeat(name string) error {
 }
 
 func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
-	row := r.db.QueryRow(
-		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE token = ?`, token,
+	// Get all agents and check token
+	// Supports both Argon2id hashes and plaintext tokens for migration
+	rows, err := r.db.Query(
+		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents`,
 	)
-	agent := &models.Agent{}
-	var heartbeat sql.NullString
-	var skills, webhookSecret string
-	if err := row.Scan(&agent.Name, &agent.Port, &agent.Token, &heartbeat, &skills, &agent.WebhookURL, &webhookSecret); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
+	if err != nil {
+		return nil, fmt.Errorf("query agents: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var a models.Agent
+		var heartbeat sql.NullString
+		var storedToken string
+		var skills, webhookSecret string
+		if err := rows.Scan(&a.Name, &a.Port, &storedToken, &heartbeat, &skills, &a.WebhookURL, &webhookSecret); err != nil {
+			return nil, fmt.Errorf("scan agent: %w", err)
 		}
-		return nil, fmt.Errorf("scan agent by token: %w", err)
+		if heartbeat.Valid {
+			a.LastHeartbeat = heartbeat.String
+		}
+
+		var match bool
+		// Try Argon2id verification first
+		hashMatch, hashErr := verifyToken(token, storedToken)
+		if hashMatch && hashErr == nil {
+			match = true
+		} else {
+			// Fallback: plaintext comparison (for migration from pre-hash tokens)
+			match = (token == storedToken)
+		}
+
+		if match {
+			a.Token = ""
+			a.WebhookSecret = webhookSecret
+			if err := json.Unmarshal([]byte(skills), &a.Skills); err != nil {
+				return nil, fmt.Errorf("unmarshal skills: %w", err)
+			}
+			return &a, nil
+		}
 	}
-	if heartbeat.Valid {
-		agent.LastHeartbeat = heartbeat.String
-	}
-	// Always clear token in response
-	agent.Token = ""
-	agent.WebhookSecret = webhookSecret
-	if err := json.Unmarshal([]byte(skills), &agent.Skills); err != nil {
-		return nil, fmt.Errorf("unmarshal skills: %w", err)
-	}
-	return agent, nil
+	return nil, nil
 }
 
 func (r *AgentRepo) ListStale(dur time.Duration) ([]models.Agent, error) {
