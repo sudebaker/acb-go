@@ -2,6 +2,7 @@ package db
 
 import (
 	"crypto/rand"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -57,10 +58,7 @@ func verifyToken(token, storedHash string) (bool, error) {
 	}
 
 	// Constant-time comparison to prevent timing attacks
-	match := true
-	for i := range expected {
-		match = match && (expected[i] == hash[i])
-	}
+	match := subtle.ConstantTimeCompare(expected, hash) == 1
 
 	return match, nil
 }

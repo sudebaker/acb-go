@@ -71,15 +71,14 @@ func ValidateWebhookURL(rawURL string) error {
 	if scheme == "https" {
 		// HTTPS always allowed
 	} else if scheme == "http" && allowHTTP {
-		// HTTP allowed in internal mode — skip private IP checks
-		// since Docker agents communicate on localhost/internal IPs
-		return nil
+		// HTTP allowed in internal mode — but still block loopback and metadata
+		// to prevent severe SSRF.
 	} else {
 		return fmt.Errorf("webhook URL must use https:// (got %s); set ACB_ALLOW_HTTP_WEBHOOKS=1 for internal networks", scheme)
 	}
 
 	// For HTTPS: resolve and check for private IPs (SSRF protection)
-	host := u.Host
+	host := u.Hostname()
 	if host == "" {
 		return ErrInvalidWebhookURL
 	}

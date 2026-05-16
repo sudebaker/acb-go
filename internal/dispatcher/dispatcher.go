@@ -220,7 +220,7 @@ func (d *Dispatcher) retryEntry(data string) {
 		return
 	}
 
-	if entry.Attempt > maxRetries {
+	if entry.Attempt >= maxRetries {
 		log.Printf("[dispatcher] max retries exceeded for task %s to agent %s, giving up", entry.TaskID, entry.AgentName)
 		return
 	}

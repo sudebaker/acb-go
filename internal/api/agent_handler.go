@@ -57,6 +57,7 @@ func (h *AgentHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	agent.Token = ""
+	agent.WebhookSecret = ""
 	WriteJSON(w, 200, agent)
 }
 
@@ -112,5 +113,6 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 
 	// Return the agent without the token
 	agent.Token = ""
+	agent.WebhookSecret = ""
 	WriteJSON(w, 200, agent)
 }

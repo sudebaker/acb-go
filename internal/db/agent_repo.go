@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
+	"crypto/subtle"
 	"fmt"
 	"time"
 
@@ -111,10 +112,10 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 		hashMatch, hashErr := verifyToken(token, storedToken)
 		if hashMatch && hashErr == nil {
 			match = true
-		} else {
-			// Fallback: plaintext comparison (for migration from pre-hash tokens)
-			match = (token == storedToken)
-		}
+	} else {
+		// Fallback: plaintext comparison (for migration from pre-hash tokens)
+		match = subtle.ConstantTimeCompare([]byte(token), []byte(storedToken)) == 1
+	}
 
 		if match {
 			a.Token = ""
