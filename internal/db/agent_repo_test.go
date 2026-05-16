@@ -214,4 +214,81 @@ func TestHasRequiredSkills(t *testing.T) {
 	}
 }
 
+func TestUpsertAgentWithWebhook(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAgentRepo(db)
+
+	agent := &models.Agent{
+		Name:          "webhook-agent",
+		Port:          8081,
+		Token:         "tok-wh",
+		Skills:        []string{"go"},
+		WebhookURL:    "http://localhost:8645/webhooks/amanda",
+		WebhookSecret: "secret-123",
+	}
+	if err := repo.UpsertAgent(agent); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByName("webhook-agent")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.WebhookURL != "http://localhost:8645/webhooks/amanda" {
+		t.Errorf("expected webhook_url, got %q", got.WebhookURL)
+	}
+	// GetByName clears token but should keep webhook_secret
+	if got.WebhookSecret != "secret-123" {
+		t.Errorf("expected webhook_secret, got %q", got.WebhookSecret)
+	}
+	if got.Token != "" {
+		t.Errorf("expected token to be cleared, got %q", got.Token)
+	}
+}
+
+func TestFindMatchingAgents(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAgentRepo(db)
+
+	repo.UpsertAgent(&models.Agent{Name: "go-agent", Port: 8081, Skills: []string{"go", "testing"}})
+	repo.UpsertAgent(&models.Agent{Name: "python-agent", Port: 8082, Skills: []string{"python", "sql"}})
+	repo.UpsertAgent(&models.Agent{Name: "fullstack", Port: 8083, Skills: []string{"go", "python", "sql"}})
+
+	// Find agents with "go" skill
+	agents, err := repo.FindMatchingAgents([]string{"go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 2 {
+		t.Errorf("expected 2 agents with 'go' skill, got %d", len(agents))
+	}
+
+	// Find agents with all skills
+	agents, err = repo.FindMatchingAgents([]string{"go", "python"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 1 {
+		t.Errorf("expected 1 agent with both 'go' and 'python' skills, got %d", len(agents))
+	}
+
+	// Find agents with empty required skills (all agents)
+	agents, err = repo.FindMatchingAgents(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 3 {
+		t.Errorf("expected 3 agents with no skill filter, got %d", len(agents))
+	}
+
+	// Find agents with non-existent skill
+	agents, err = repo.FindMatchingAgents([]string{"rust"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(agents) != 0 {
+		t.Errorf("expected 0 agents with 'rust' skill, got %d", len(agents))
+	}
+}
+
 

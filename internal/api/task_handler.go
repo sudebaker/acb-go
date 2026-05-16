@@ -7,6 +7,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/sudebaker/acb-go/internal/db"
+	"github.com/sudebaker/acb-go/internal/dispatcher"
 	"github.com/sudebaker/acb-go/internal/models"
 	acbredis "github.com/sudebaker/acb-go/internal/redis"
 	"github.com/go-chi/chi/v5"
@@ -17,6 +18,7 @@ type TaskHandler struct {
 	gateRepo   *db.GateRepo
 	agentRepo  *db.AgentRepo
 	pub        *acbredis.Publisher
+	dispatcher *dispatcher.Dispatcher
 }
 
 func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -67,9 +69,21 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Retrieve the task from DB to get server-generated timestamps (created_at, updated_at)
+	createdTask, err := h.taskRepo.GetByID(task.ID)
+	if err != nil {
+		WriteError(w, 500, "get_task_failed", err.Error())
+		return
+	}
+
 	go h.pub.PublishTaskEvent(acbredis.EventNewTask, task.ID, task.Assignee, "", "", task.RequiredSkills...)
 
-	WriteJSON(w, 201, task)
+	// Dispatch webhook to matching agents
+	if h.dispatcher != nil {
+		go h.dispatcher.DispatchNewTask(createdTask)
+	}
+
+	WriteJSON(w, 201, createdTask)
 }
 
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
@@ -195,7 +209,7 @@ func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskStarted, id, "", "", "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskStarted, id, task.Assignee, "", "", task.RequiredSkills...)
 
 	WriteJSON(w, 200, task)
 }
@@ -213,6 +227,17 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.GateID == "" || input.Question == "" {
 		WriteError(w, 400, "missing_fields", "gate_id and question are required")
+		return
+	}
+
+	// Get task before blocking to include in webhook
+	task, err := h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_task_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
 		return
 	}
 
@@ -237,9 +262,9 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskBlocked, id, "", input.GateID, "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskBlocked, id, task.Assignee, input.GateID, "", task.RequiredSkills...)
 
-	WriteJSON(w, 200, map[string]string{"status": "blocked", "gate_id": input.GateID})
+	WriteJSON(w, 200, task)
 }
 
 func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
@@ -257,6 +282,17 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get task before unblocking to include in webhook
+	task, err := h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_task_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+
 	if err := h.gateRepo.ResolveGate(input.GateID); err != nil {
 		WriteError(w, 409, "resolve_failed", err.Error())
 		return
@@ -266,9 +302,9 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "update_failed", err.Error())
 		return
 	}
-	go h.pub.PublishTaskEvent(acbredis.EventTaskUnblock, id, "", input.GateID, "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskUnblock, id, task.Assignee, input.GateID, "")
 
-	WriteJSON(w, 200, map[string]string{"id": id, "status": "in_progress"})
+	WriteJSON(w, 200, task)
 }
 
 func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
@@ -293,7 +329,7 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskDone, id, "", "", input.Summary)
+	go h.pub.PublishTaskEvent(acbredis.EventTaskDone, id, task.Assignee, "", input.Summary, task.RequiredSkills...)
 
 	WriteJSON(w, 200, task)
 }
@@ -320,7 +356,7 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, "", "", "")
+	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, task.Assignee, "", input.Reason, task.RequiredSkills...)
 
 	WriteJSON(w, 200, task)
 }

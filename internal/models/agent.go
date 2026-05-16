@@ -6,4 +6,6 @@ type Agent struct {
 	Token         string   `json:"token,omitempty"`
 	LastHeartbeat string   `json:"last_heartbeat,omitempty"`
 	Skills        []string `json:"skills,omitempty"`
+	WebhookURL    string   `json:"webhook_url,omitempty"`
+	WebhookSecret string   `json:"webhook_secret,omitempty"`
 }

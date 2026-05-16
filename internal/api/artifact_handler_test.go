@@ -8,6 +8,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -78,7 +79,7 @@ func (s *handlerMemStore) ListObjects(_ context.Context, prefix string) ([]strin
 	defer s.mu.Unlock()
 	var keys []string
 	for key := range s.data {
-		if len(key) >= len(prefix) && key[:len(prefix)] == prefix {
+		if strings.HasPrefix(key, prefix) {
 			keys = append(keys, key)
 		}
 	}
@@ -96,7 +97,7 @@ func setupRouterWithRustFS(t *testing.T) (*db.TaskRepo, *rustfs.Client, http.Han
 	memStore := newHandlerMemStore()
 	rustfsClient := rustfs.NewClientWithStore(memStore, "test-bucket")
 
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient, nil)
 	return taskRepo, rustfsClient, r, memStore
 }
 

@@ -1,0 +1,93 @@
+package db
+
+import (
+	"crypto/argon2"
+	"crypto/rand"
+	"database/sql"
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"time"
+
+	"github.com/sudebaker/acb-go/internal/models"
+)
+
+const (
+	// Argon2 parameters (tunable, match OWASP recommendations)
+			argon2Time    = 3    // 3 passes
+			argon2Memory  = 64 * 1024 // 64 MB
+			argon2Threads = 4
+			argon2KeyLen  = 32
+)
+
+// hashToken creates an Argon2id hash of the token with a random salt.
+// Returns base64-encoded hash string in format: base64(salt|hash).
+func hashToken(token string) (string, error) {
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return "", fmt.Errorf("generate salt: %w", err)
+	}
+
+	hash := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+
+	// Encode as base64:盐|hash (separated by | for parsing)
+	result := make([]byte, len(salt)+len(hash))
+	copy(result[:len(salt)], salt)
+	copy(result[len(salt):], hash)
+
+	return base64.StdEncoding.EncodeToString(result), nil
+}
+
+// verifyToken checks if a token matches the stored hash.
+func verifyToken(token, storedHash string) (bool, error) {
+	decoded, err := base64.StdEncoding.DecodeString(storedHash)
+	if err != nil {
+		return false, fmt.Errorf("decode hash: %w", err)
+	}
+
+	if len(decoded) < 16+32 { // salt + min hash
+		return false, fmt.Errorf("invalid hash length")
+	}
+
+	salt := decoded[:16]
+	hash := decoded[16:]
+
+	expected := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+
+	if len(expected) != len(hash) {
+		return false, fmt.Errorf("hash mismatch")
+	}
+
+	// Constant-time comparison to prevent timing attacks
+	match := true
+	for i := range expected {
+		match = match && (expected[i] == hash[i])
+	}
+
+	return match, nil
+}
+
+// StoreTokenHash stores a token as its Argon2id hash.
+func StoreTokenHash(repo *AgentRepo, agentName, token string) error {
+	hash, err := hashToken(token)
+	if err != nil {
+		return err
+	}
+	_, err = repo.db.Exec(
+		`UPDATE agents SET token = ? WHERE name = ?`, hash, agentName,
+	)
+	return err
+}
+
+// CheckToken verifies a token against the stored hash.
+func CheckToken(repo *AgentRepo, agentName, token string) (bool, error) {
+	var storedHash string
+	err := repo.db.QueryRow(`SELECT token FROM agents WHERE name = ?`, agentName).Scan(&storedHash)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, err
+	}
+	return verifyToken(token, storedHash)
+}

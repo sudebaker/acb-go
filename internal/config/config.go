@@ -22,7 +22,7 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		Port:               getEnvInt("ACB_PORT", 8080),
+		Port:               getEnvInt("ACB_PORT", 8090),
 		DBPath:             getEnv("ACB_DB_PATH", "/var/lib/acb/acb.db"),
 		RedisAddr:          getEnv("ACB_REDIS_ADDR", "localhost:6379"),
 		RedisPass:          getEnv("ACB_REDIS_PASS", ""),

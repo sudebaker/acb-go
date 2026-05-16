@@ -42,7 +42,9 @@ CREATE TABLE IF NOT EXISTS agents (
 	port INTEGER NOT NULL DEFAULT 0,
 	token TEXT NOT NULL DEFAULT '',
 	last_heartbeat TEXT,
-	skills TEXT NOT NULL DEFAULT '[]'
+	skills TEXT NOT NULL DEFAULT '[]',
+	webhook_url TEXT NOT NULL DEFAULT '',
+	webhook_secret TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS task_events (
@@ -58,6 +60,18 @@ CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
 CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
 `
 
-	_, err := db.Exec(schema)
-	return err
+	if _, err := db.Exec(schema); err != nil {
+		return err
+	}
+
+	// Migrations for existing databases that lack newer columns
+	migrations := []string{
+		`ALTER TABLE agents ADD COLUMN webhook_url TEXT NOT NULL DEFAULT ''`,
+		`ALTER TABLE agents ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''`,
+	}
+	for _, m := range migrations {
+		// Ignore errors — column may already exist
+		db.Exec(m)
+	}
+	return nil
 }

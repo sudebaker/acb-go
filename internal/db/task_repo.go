@@ -97,22 +97,30 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 		return nil, fmt.Errorf("scan task: %w", err)
 	}
 
-	task.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt)
-	task.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt)
+	if parsed, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
+		task.CreatedAt = parsed
+	} else {
+		log.Printf("[WARN] GetByID: failed to parse created_at %q: %v", createdAt, err)
+	}
+	if parsed, err := time.Parse("2006-01-02 15:04:05", updatedAt); err == nil {
+		task.UpdatedAt = parsed
+	} else {
+		log.Printf("[WARN] GetByID: failed to parse updated_at %q: %v", updatedAt, err)
+	}
 	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
-		return nil, fmt.Errorf("unmarshal parents: %w", err)
+		log.Printf("[WARN] GetByID: failed to unmarshal parents: %v", err)
 	}
 	if err := json.Unmarshal([]byte(skills), &task.Skills); err != nil {
-		return nil, fmt.Errorf("unmarshal skills: %w", err)
+		log.Printf("[WARN] GetByID: failed to unmarshal skills: %v", err)
 	}
 	if err := json.Unmarshal([]byte(requiredSkills), &task.RequiredSkills); err != nil {
-		return nil, fmt.Errorf("unmarshal required_skills: %w", err)
+		log.Printf("[WARN] GetByID: failed to unmarshal required_skills: %v", err)
 	}
 	if err := json.Unmarshal([]byte(tags), &task.Tags); err != nil {
-		return nil, fmt.Errorf("unmarshal tags: %w", err)
+		log.Printf("[WARN] GetByID: failed to unmarshal tags: %v", err)
 	}
 	if err := json.Unmarshal([]byte(artifacts), &task.Artifacts); err != nil {
-		return nil, fmt.Errorf("unmarshal artifacts: %w", err)
+		log.Printf("[WARN] GetByID: failed to unmarshal artifacts: %v", err)
 	}
 
 	if task.Status == "" {
@@ -139,7 +147,6 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 		args = append(args, fmt.Sprintf("%%%s%%", skill))
 	}
 
-	log.Printf("[ACB] List query: %s args: %v", query, args)
 	rows, err := r.db.Query(query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
@@ -151,21 +158,39 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 		var t models.Task
 		var parents, skills, reqSkills, tags, artifacts string
 		var createdAt, updatedAt sql.NullString
-		if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status, &t.Priority, &parents, &skills, &reqSkills, &tags, &t.BodyGoal, &t.BodyContext, &t.BodyDeliverableFmt, &t.BodyDeliverablePath, &createdAt, &updatedAt, &t.Summary, &artifacts); err != nil {
-			return nil, fmt.Errorf("scan task row: %w", err)
+	if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status, &t.Priority, &parents, &skills, &reqSkills, &tags, &t.BodyGoal, &t.BodyContext, &t.BodyDeliverableFmt, &t.BodyDeliverablePath, &createdAt, &updatedAt, &t.Summary, &artifacts); err != nil {
+		return nil, fmt.Errorf("scan task row: %w", err)
+	}
+	if createdAt.Valid {
+		if parsed, err := time.Parse("2006-01-02 15:04:05", createdAt.String); err == nil {
+			t.CreatedAt = parsed
+		} else {
+			log.Printf("[WARN] List: failed to parse created_at %q: %v", createdAt.String, err)
 		}
-		if createdAt.Valid {
-			t.CreatedAt, _ = time.Parse("2006-01-02 15:04:05", createdAt.String)
+	}
+	if updatedAt.Valid {
+		if parsed, err := time.Parse("2006-01-02 15:04:05", updatedAt.String); err == nil {
+			t.UpdatedAt = parsed
+		} else {
+			log.Printf("[WARN] List: failed to parse updated_at %q: %v", updatedAt.String, err)
 		}
-		if updatedAt.Valid {
-			t.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updatedAt.String)
-		}
-		_ = json.Unmarshal([]byte(parents), &t.Parents)
-		_ = json.Unmarshal([]byte(skills), &t.Skills)
-		_ = json.Unmarshal([]byte(reqSkills), &t.RequiredSkills)
-		_ = json.Unmarshal([]byte(tags), &t.Tags)
-		_ = json.Unmarshal([]byte(artifacts), &t.Artifacts)
-		tasks = append(tasks, t)
+	}
+	if err := json.Unmarshal([]byte(parents), &t.Parents); err != nil {
+		log.Printf("[WARN] List: failed to unmarshal parents: %v", err)
+	}
+	if err := json.Unmarshal([]byte(skills), &t.Skills); err != nil {
+		log.Printf("[WARN] List: failed to unmarshal skills: %v", err)
+	}
+	if err := json.Unmarshal([]byte(reqSkills), &t.RequiredSkills); err != nil {
+		log.Printf("[WARN] List: failed to unmarshal required_skills: %v", err)
+	}
+	if err := json.Unmarshal([]byte(tags), &t.Tags); err != nil {
+		log.Printf("[WARN] List: failed to unmarshal tags: %v", err)
+	}
+	if err := json.Unmarshal([]byte(artifacts), &t.Artifacts); err != nil {
+		log.Printf("[WARN] List: failed to unmarshal artifacts: %v", err)
+	}
+	tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
 }

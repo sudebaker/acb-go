@@ -28,7 +28,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 
 	agentRepo.UpsertAgent(&models.Agent{Name: "worker-a", Token: "e2e-token"})
 
-	r := api.NewRouter(taskRepo, gateRepo, agentRepo, nil, nil)
+	r := api.NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil)
 
 	auth := func(method, target, body string) *http.Request {
 		req := httptest.NewRequest(method, target, strings.NewReader(body))

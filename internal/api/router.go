@@ -7,13 +7,14 @@ import (
 	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
 	acbredis "github.com/sudebaker/acb-go/internal/redis"
+	"github.com/sudebaker/acb-go/internal/dispatcher"
 	"github.com/sudebaker/acb-go/internal/rustfs"
 	"github.com/go-chi/chi/v5"
 	chimw "github.com/go-chi/chi/v5/middleware"
 	"golang.org/x/time/rate"
 )
 
-func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher, rustfsClient *rustfs.Client) *chi.Mux {
+func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher, rustfsClient *rustfs.Client, disp *dispatcher.Dispatcher) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -30,9 +31,10 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	})
 
 	if taskRepo != nil && gateRepo != nil {
-		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo, agentRepo: agentRepo, pub: pub}
+		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo, agentRepo: agentRepo, pub: pub, dispatcher: disp}
 		r.Post("/tasks", h.CreateTask)
 		r.Get("/tasks", h.ListTasks)
+		r.Get("/tasks/dispatch", h.DispatchNext)
 		r.Get("/tasks/{id}", h.GetTask)
 		r.Post("/tasks/{id}/claim", h.ClaimTask)
 		r.Post("/tasks/{id}/start", h.StartTask)
@@ -53,6 +55,7 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	if agentRepo != nil {
 		limiter := NewRateLimiter(rate.Every(6*time.Second), 1)
 		ah := &AgentHandler{agentRepo: agentRepo, limiter: limiter}
+		r.Post("/agents", ah.RegisterAgent)
 		r.Post("/agents/heartbeat", ah.Heartbeat)
 		r.Get("/agents/{name}", ah.GetAgent)
 	}

@@ -7,7 +7,11 @@ COPY . .
 RUN go mod tidy && go build -o /acb .
 
 FROM alpine:3.19
-RUN apk add --no-cache sqlite
+RUN apk add --no-cache sqlite ca-certificates
+RUN adduser -D -u 1000 acb \
+    && mkdir -p /var/lib/acb \
+    && chown acb:acb /var/lib/acb
 COPY --from=builder /acb /acb
-EXPOSE 8080
+USER acb
+EXPOSE 8090
 ENTRYPOINT ["/acb"]
