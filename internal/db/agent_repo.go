@@ -20,7 +20,7 @@ func NewAgentRepo(db *sql.DB) *AgentRepo {
 
 func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
 	// Store token as Argon2id hash, never plaintext
-	hash, err := hashToken(agent.Token)
+	hash, prefix, err := hashToken(agent.Token)
 	if err != nil {
 		return fmt.Errorf("hash token: %w", err)
 	}
@@ -30,16 +30,17 @@ func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
 		return fmt.Errorf("marshal skills: %w", err)
 	}
 	_, err = r.db.Exec(
-		`INSERT INTO agents (name, port, token, last_heartbeat, skills, webhook_url, webhook_secret)
-VALUES (?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO agents (name, port, token, token_prefix, last_heartbeat, skills, webhook_url, webhook_secret)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(name) DO UPDATE SET 
 	port = excluded.port, 
 	token = excluded.token,
+	token_prefix = excluded.token_prefix,
 	last_heartbeat = excluded.last_heartbeat,
 	skills = excluded.skills,
 	webhook_url = excluded.webhook_url,
 	webhook_secret = excluded.webhook_secret`,
-		agent.Name, agent.Port, hash, agent.LastHeartbeat, string(skills), agent.WebhookURL, agent.WebhookSecret,
+		agent.Name, agent.Port, hash, prefix, agent.LastHeartbeat, string(skills), agent.WebhookURL, agent.WebhookSecret,
 	)
 	return err
 }
@@ -85,10 +86,12 @@ func (r *AgentRepo) UpdateHeartbeat(name string) error {
 }
 
 func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
-	// Get all agents and check token
-	// Supports both Argon2id hashes and plaintext tokens for migration
+	if len(token) < 8 {
+		return nil, nil
+	}
+	prefix := token[:8]
 	rows, err := r.db.Query(
-		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents`,
+		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE token_prefix = ?`, prefix,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query agents: %w", err)

@@ -47,6 +47,7 @@ type HTTPDoer interface {
 
 // Dispatcher pushes tasks to agent webhooks and retries on failure.
 type Dispatcher struct {
+	semaphore chan struct{}
 	agentRepo  *db.AgentRepo
 	taskRepo    *db.TaskRepo
 	rdb         *goredis.Client
@@ -63,6 +64,7 @@ func NewDispatcher(agentRepo *db.AgentRepo, taskRepo *db.TaskRepo, rdb *goredis.
 		taskRepo:   taskRepo,
 		rdb:        rdb,
 		httpClient: NewSafeHTTPClient(),
+		semaphore:  make(chan struct{}, 10),
 	}
 }
 
@@ -98,14 +100,24 @@ func (d *Dispatcher) DispatchNewTask(task *models.Task) {
 		if agent.WebhookURL == "" {
 			continue
 		}
-		go d.sendWebhook(agent, task, 0)
+		go d.sendWebhookWithSemaphore(agent, task, 0)
 	}
 }
 
 // sendWebhook POSTs the task to an agent's webhook URL.
 // On failure, it enqueues a retry via Redis.
 // Validates webhook URL for SSRF, adds timestamp to HMAC.
+func (d *Dispatcher) sendWebhookWithSemaphore(agent models.Agent, task *models.Task, attempt int) {
+	d.semaphore <- struct{}{}
+	defer func() {
+		<-d.semaphore
+	}()
+	d.sendWebhook(agent, task, attempt)
+}
+
 func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt int) {
+	d.wg.Add(1)
+	defer d.wg.Done()
 	// Validate webhook URL before sending
 	if err := ValidateWebhookURL(agent.WebhookURL); err != nil {
 		log.Printf("[dispatcher] invalid webhook URL for agent %s: %v", agent.Name, err)

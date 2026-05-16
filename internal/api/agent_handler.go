@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+	"github.com/sudebaker/acb-go/internal/dispatcher"
 
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
@@ -87,7 +88,11 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 
 	// SECURITY: Validate that registering agent is the same as X-Agent-Name (from auth middleware)
 	agentNameFromAuth := r.Header.Get("X-Agent-Name")
-	if agentNameFromAuth != "" && input.Name != agentNameFromAuth {
+	if agentNameFromAuth == "" {
+		WriteError(w, 401, "unauthorized", "X-Agent-Name header is missing")
+		return
+	}
+	if agentNameFromAuth != input.Name {
 		WriteError(w, 403, "forbidden", "agent can only register itself")
 		return
 	}
@@ -97,14 +102,14 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 		input.Token = r.Header.Get("X-Auth-Token")
 	}
 
-	agent := &models.Agent{
-		Name:          input.Name,
-		Port:          input.Port,
-		Token:         input.Token,
-		Skills:        input.Skills,
-		WebhookURL:    input.WebhookURL,
-		WebhookSecret: input.WebhookSecret,
+	if input.WebhookURL != "" {
+		if err := dispatcher.ValidateWebhookURL(input.WebhookURL); err != nil {
+			WriteError(w, 400, "invalid_webhook_url", err.Error())
+			return
+		}
 	}
+
+	agent := &models.Agent{Name: input.Name, Port: input.Port, Token: input.Token, Skills: input.Skills, WebhookURL: input.WebhookURL, WebhookSecret: input.WebhookSecret}
 
 	if err := h.agentRepo.UpsertAgent(agent); err != nil {
 		WriteError(w, 500, "upsert_failed", err.Error())

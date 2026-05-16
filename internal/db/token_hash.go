@@ -20,20 +20,25 @@ const (
 
 // hashToken creates an Argon2id hash of the token with a random salt.
 // Returns base64-encoded hash string in format: base64(salt|hash).
-func hashToken(token string) (string, error) {
+func hashToken(token string) (hashStr string, prefix string, err error) {
 	salt := make([]byte, 16)
 	if _, err := rand.Read(salt); err != nil {
-		return "", fmt.Errorf("generate salt: %w", err)
+		return "", "", fmt.Errorf("generate salt: %w", err)
 	}
 
-	hash := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
+	key := argon2.IDKey([]byte(token), salt, argon2Time, argon2Memory, argon2Threads, argon2KeyLen)
 
 	// Encode as base64: salt + hash concatenated
-	result := make([]byte, len(salt)+len(hash))
+	result := make([]byte, len(salt)+len(key))
 	copy(result[:len(salt)], salt)
-	copy(result[len(salt):], hash)
+	copy(result[len(salt):], key)
 
-	return base64.StdEncoding.EncodeToString(result), nil
+	fullHash := base64.StdEncoding.EncodeToString(result)
+	prefix = ""
+	if len(fullHash) >= 8 {
+		prefix = fullHash[:8]
+	}
+	return fullHash, prefix, nil
 }
 
 // verifyToken checks if a token matches the stored hash.
@@ -65,12 +70,12 @@ func verifyToken(token, storedHash string) (bool, error) {
 
 // StoreTokenHash stores a token as its Argon2id hash.
 func StoreTokenHash(repo *AgentRepo, agentName, token string) error {
-	hash, err := hashToken(token)
+	hash, prefix, err := hashToken(token)
 	if err != nil {
 		return err
 	}
 	_, err = repo.db.Exec(
-		`UPDATE agents SET token = ? WHERE name = ?`, hash, agentName,
+		`UPDATE agents SET token = ?, token_prefix = ? WHERE name = ?`, hash, prefix, agentName,
 	)
 	return err
 }

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	skills TEXT NOT NULL DEFAULT '[]',
 	webhook_url TEXT NOT NULL DEFAULT '',
 	webhook_secret TEXT NOT NULL DEFAULT ''
+	token_prefix TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS task_events (
@@ -57,8 +58,9 @@ CREATE TABLE IF NOT EXISTS task_events (
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
-CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
-`
+	CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
+	`
+	db.Exec(`CREATE INDEX IF NOT EXISTS idx_agents_token_prefix ON agents(token_prefix)`)
 
 	if _, err := db.Exec(schema); err != nil {
 		return err

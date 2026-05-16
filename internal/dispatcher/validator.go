@@ -27,13 +27,15 @@ func allowHTTPWebhooks() bool {
 // isPrivateIP checks if an IP is private, loopback, or in a denylist range.
 func isPrivateIP(ip net.IP) bool {
 	if ip == nil {
-		return false
+		return true
 	}
 	// RFC 1918
 	privateNetworks := []*net.IPNet{
 		{IP: net.ParseIP("10.0.0.0"), Mask: net.CIDRMask(8, 32)},
 		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
 		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
+		{IP: net.ParseIP("0.0.0.0"), Mask: net.CIDRMask(8, 32)},
+		{IP: net.ParseIP("100.64.0.0"), Mask: net.CIDRMask(10, 32)},
 	}
 	for _, network := range privateNetworks {
 		if network.Contains(ip) {
@@ -44,6 +46,8 @@ func isPrivateIP(ip net.IP) bool {
 	denyRanges := []*net.IPNet{
 		{IP: net.ParseIP("127.0.0.0"), Mask: net.CIDRMask(8, 32)},    // loopback
 		{IP: net.ParseIP("169.254.0.0"), Mask: net.CIDRMask(16, 32)}, // link-local
+		{IP: net.ParseIP("fc00::"), Mask: net.CIDRMask(7, 128)},      // IPv6 unique local
+		{IP: net.ParseIP("fe80::"), Mask: net.CIDRMask(10, 128)},     // IPv6 link-local
 		{IP: net.ParseIP("::1"), Mask: net.CIDRMask(128, 128)},       // IPv6 loopback
 	}
 	for _, network := range denyRanges {
