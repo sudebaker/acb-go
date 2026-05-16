@@ -132,13 +132,12 @@ func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Webhook-Timestamp", payload.Timestamp)
 
-	// Sign with HMAC-SHA256: timestamp + "." + body
+	// Sign with HMAC-SHA256 of the body (matches Hermes webhook validation)
 	if agent.WebhookSecret != "" {
-		signingInput := payload.Timestamp + "." + string(body)
 		mac := hmac.New(sha256.New, []byte(agent.WebhookSecret))
-		mac.Write([]byte(signingInput))
+		mac.Write(body)
 		sig := hex.EncodeToString(mac.Sum(nil))
-		req.Header.Set("X-Webhook-Signature", fmt.Sprintf("sha256=%s", sig))
+		req.Header.Set("X-Webhook-Signature", sig)
 	}
 
 	// Set timeout for this request (5s connect + 10s body)
