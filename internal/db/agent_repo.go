@@ -3,7 +3,6 @@ package db
 import (
 	"database/sql"
 	"encoding/json"
-	"crypto/subtle"
 	"fmt"
 	"time"
 
