@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -16,6 +17,42 @@ var (
 	ErrInvalidWebhookURL = errors.New("invalid webhook URL")
 	ErrSSRF              = errors.New("SSRF attempt blocked")
 )
+
+// DnsPinCache stores resolved IPs for webhook URLs to prevent DNS rebinding.
+type DnsPinCache struct {
+	mu   sync.RWMutex
+	ips  map[string][]net.IP
+	ttls map[string]time.Time
+}
+
+// NewDnsPinCache creates a new DNS pin cache.
+func NewDnsPinCache() *DnsPinCache {
+	return &DnsPinCache{
+		ips:  make(map[string][]net.IP),
+		ttls: make(map[string]time.Time),
+	}
+}
+
+// Get returns pinned IPs for a host, or nil if not cached.
+func (c *DnsPinCache) Get(host string) []net.IP {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	if expires, ok := c.ttls[host]; ok && time.Now().Before(expires) {
+		return c.ips[host]
+	}
+	return nil
+}
+
+// Set pins IPs for a host with a TTL.
+func (c *DnsPinCache) Set(host string, ips []net.IP, ttl time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.ips[host] = ips
+	c.ttls[host] = time.Now().Add(ttl)
+}
+
+// Global DNS pin cache (5 minute TTL)
+var dnsPinCache = NewDnsPinCache()
 
 // allowHTTPEnv controls whether http:// URLs are allowed.
 // Set ACB_ALLOW_HTTP_WEBHOOKS=1 to allow (for Docker/internal networks).
@@ -62,6 +99,7 @@ func isPrivateIP(ip net.IP) bool {
 // - Allows http:// when ACB_ALLOW_HTTP_WEBHOOKS=1 (for Docker/internal networks)
 // - Requires https:// otherwise (production)
 // - Rejects private IPs, loopback, link-local when not in allow-HTTP mode
+// - Implements DNS pinning to prevent DNS rebinding attacks
 // - No file://, gopher://, etc.
 func ValidateWebhookURL(rawURL string) error {
 	u, err := url.Parse(rawURL)
@@ -87,15 +125,28 @@ func ValidateWebhookURL(rawURL string) error {
 		return ErrInvalidWebhookURL
 	}
 
-	// Resolve all A/AAAA records
-	ips, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
-	if err != nil {
-		return fmt.Errorf("DNS resolution failed: %w", err)
+	// DNS pinning: check cache first to prevent rebinding
+	pinnedIPs := dnsPinCache.Get(host)
+	var ips []net.IP
+	if pinnedIPs != nil {
+		// Use pinned IPs from cache
+		ips = pinnedIPs
+	} else {
+		// Resolve all A/AAAA records
+		resolvedIPs, err := net.DefaultResolver.LookupIPAddr(context.Background(), host)
+		if err != nil {
+			return fmt.Errorf("DNS resolution failed: %w", err)
+		}
+		for _, ip := range resolvedIPs {
+			ips = append(ips, ip.IP)
+		}
+		// Pin the resolved IPs for 5 minutes
+		dnsPinCache.Set(host, ips, 5*time.Minute)
 	}
 
 	for _, ip := range ips {
-		if isPrivateIP(ip.IP) {
-			return fmt.Errorf("%w: %s resolves to private/loopback IP %s", ErrSSRF, host, ip.IP)
+		if isPrivateIP(ip) {
+			return fmt.Errorf("%w: %s resolves to private/loopback IP %s", ErrSSRF, host, ip)
 		}
 	}
 

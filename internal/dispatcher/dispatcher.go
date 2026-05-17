@@ -161,10 +161,18 @@ func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, ol
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Webhook-Timestamp", payload.Timestamp)
 
-	// Sign with HMAC-SHA256 of the body
+	// Sign with HMAC-SHA256 of timestamp + body (prevents replay attacks)
 	if agent.WebhookSecret != "" {
-		mac := hmac.New(sha256.New, []byte(agent.WebhookSecret))
-		mac.Write(body)
+		// Decrypt the webhook secret for HMAC signing
+		plaintextSecret, err := decryptWebhookSecret(agent.WebhookSecret)
+		if err != nil {
+			log.Printf("[dispatcher] failed to decrypt webhook secret for agent %s: %v", agent.Name, err)
+			return
+		}
+		// Include timestamp in HMAC signature to prevent replay attacks
+		signaturePayload := payload.Timestamp + "." + string(body)
+		mac := hmac.New(sha256.New, []byte(plaintextSecret))
+		mac.Write([]byte(signaturePayload))
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-Webhook-Signature", sig)
 	}
@@ -228,10 +236,18 @@ func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt 
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Webhook-Timestamp", payload.Timestamp)
 
-	// Sign with HMAC-SHA256 of the body (matches Hermes webhook validation)
+	// Sign with HMAC-SHA256 of timestamp + body (matches Hermes webhook validation, prevents replay)
 	if agent.WebhookSecret != "" {
-		mac := hmac.New(sha256.New, []byte(agent.WebhookSecret))
-		mac.Write(body)
+		// Decrypt the webhook secret for HMAC signing
+		plaintextSecret, err := decryptWebhookSecret(agent.WebhookSecret)
+		if err != nil {
+			log.Printf("[dispatcher] failed to decrypt webhook secret for agent %s: %v", agent.Name, err)
+			return
+		}
+		// Include timestamp in HMAC signature to prevent replay attacks
+		signaturePayload := payload.Timestamp + "." + string(body)
+		mac := hmac.New(sha256.New, []byte(plaintextSecret))
+		mac.Write([]byte(signaturePayload))
 		sig := hex.EncodeToString(mac.Sum(nil))
 		req.Header.Set("X-Webhook-Signature", sig)
 	}

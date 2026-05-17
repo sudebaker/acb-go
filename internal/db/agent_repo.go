@@ -25,6 +25,12 @@ func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
 		return fmt.Errorf("hash token: %w", err)
 	}
 
+	// Encrypt webhook_secret for at-rest protection
+	encryptedSecret, err := encryptWebhookSecret(agent.WebhookSecret)
+	if err != nil {
+		return fmt.Errorf("encrypt webhook secret: %w", err)
+	}
+
 	skills, err := json.Marshal(agent.Skills)
 	if err != nil {
 		return fmt.Errorf("marshal skills: %w", err)
@@ -40,7 +46,7 @@ ON CONFLICT(name) DO UPDATE SET
 	skills = excluded.skills,
 	webhook_url = excluded.webhook_url,
 	webhook_secret = excluded.webhook_secret`,
-		agent.Name, agent.Port, hash, prefix, agent.LastHeartbeat, string(skills), agent.WebhookURL, agent.WebhookSecret,
+		agent.Name, agent.Port, hash, prefix, agent.LastHeartbeat, string(skills), agent.WebhookURL, encryptedSecret,
 	)
 	return err
 }
@@ -90,17 +96,15 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 		return nil, nil
 	}
 
-	// Strategy: try prefix lookup first (fast path), then fall back to full scan.
-	// The prefix is derived from the Argon2id hash which uses a random salt,
-	// so re-hashing produces a different prefix. We try both the hash-based
-	// prefix AND the plaintext prefix for backward compatibility.
+	// Strategy: try prefix lookup first (fast path).
+	// We only try the hash-based prefix - no fallback to plaintext or full-scan
+	// to prevent timing attacks that leak the number of agents.
 	_, hashPrefix, err := hashToken(token)
 	if err != nil {
 		return nil, fmt.Errorf("hash token for lookup: %w", err)
 	}
-	plainPrefix := token[:8]
 
-	// Try hash-based prefix first
+	// Try hash-based prefix lookup only
 	agent, err := r.getByTokenPrefix(token, hashPrefix)
 	if err != nil {
 		return nil, err
@@ -109,17 +113,8 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 		return agent, nil
 	}
 
-	// Try plaintext prefix (for tokens registered with older code or admin tokens)
-	agent, err = r.getByTokenPrefix(token, plainPrefix)
-	if err != nil {
-		return nil, err
-	}
-	if agent != nil {
-		return agent, nil
-	}
-
-	// Last resort: full table scan (handles edge cases where prefix doesn't match)
-	return r.getByTokenFullScan(token)
+	// No fallback to full-scan - prevents timing attack that leaks agent count
+	return nil, nil
 }
 
 func (r *AgentRepo) getByTokenPrefix(token, prefix string) (*models.Agent, error) {
@@ -128,17 +123,6 @@ func (r *AgentRepo) getByTokenPrefix(token, prefix string) (*models.Agent, error
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query agents: %w", err)
-	}
-	defer rows.Close()
-	return r.scanMatchingAgent(rows, token)
-}
-
-func (r *AgentRepo) getByTokenFullScan(token string) (*models.Agent, error) {
-	rows, err := r.db.Query(
-		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents`,
-	)
-	if err != nil {
-		return nil, fmt.Errorf("query all agents: %w", err)
 	}
 	defer rows.Close()
 	return r.scanMatchingAgent(rows, token)
@@ -157,16 +141,13 @@ func (r *AgentRepo) scanMatchingAgent(rows *sql.Rows, token string) (*models.Age
 			a.LastHeartbeat = heartbeat.String
 		}
 
-		var match bool
-		// Try Argon2id verification first
-		hashMatch, hashErr := verifyToken(token, storedToken)
-		if hashMatch && hashErr == nil {
-			match = true
-		} else {
-			// Fallback: plaintext comparison (for migration from pre-hash tokens)
-			match = subtle.ConstantTimeCompare([]byte(token), []byte(storedToken)) == 1
+		// Only Argon2id verification - no plaintext fallback
+		// Plaintext tokens should have been migrated before deploying this version
+		match, err := verifyToken(token, storedToken)
+		if err != nil {
+			// Hash verification failed - skip this agent
+			continue
 		}
-
 		if match {
 			a.Token = ""
 			a.WebhookSecret = webhookSecret
@@ -245,30 +226,6 @@ func (r *AgentRepo) HasRequiredSkills(agentName string, requiredSkills []string)
 		}
 	}
 	return true, nil
-}
-
-func (r *AgentRepo) GetByWebhookSecret(secret string) (*models.Agent, error) {
-	row := r.db.QueryRow(
-		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE webhook_secret = ?`, secret,
-	)
-	agent := &models.Agent{}
-	var heartbeat sql.NullString
-	var skills, webhookSecret string
-	if err := row.Scan(&agent.Name, &agent.Port, &agent.Token, &heartbeat, &skills, &agent.WebhookURL, &webhookSecret); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, fmt.Errorf("scan agent by webhook_secret: %w", err)
-	}
-	if heartbeat.Valid {
-		agent.LastHeartbeat = heartbeat.String
-	}
-	agent.Token = ""
-	agent.WebhookSecret = webhookSecret
-	if err := json.Unmarshal([]byte(skills), &agent.Skills); err != nil {
-		return nil, fmt.Errorf("unmarshal skills: %w", err)
-	}
-	return agent, nil
 }
 
 // FindMatchingAgents returns all agents whose skills include ALL of the requiredSkills.
