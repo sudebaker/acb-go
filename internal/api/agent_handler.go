@@ -87,12 +87,13 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// SECURITY: Validate that registering agent is the same as X-Agent-Name (from auth middleware)
+	// Exception: admin token (X-Agent-Name=admin) can register any agent (bootstrap)
 	agentNameFromAuth := r.Header.Get("X-Agent-Name")
 	if agentNameFromAuth == "" {
 		WriteError(w, 401, "unauthorized", "X-Agent-Name header is missing")
 		return
 	}
-	if agentNameFromAuth != input.Name {
+	if agentNameFromAuth != "admin" && agentNameFromAuth != input.Name {
 		WriteError(w, 403, "forbidden", "agent can only register itself")
 		return
 	}

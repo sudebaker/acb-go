@@ -44,7 +44,7 @@ CREATE TABLE IF NOT EXISTS agents (
 	last_heartbeat TEXT,
 	skills TEXT NOT NULL DEFAULT '[]',
 	webhook_url TEXT NOT NULL DEFAULT '',
-	webhook_secret TEXT NOT NULL DEFAULT ''
+	webhook_secret TEXT NOT NULL DEFAULT '',
 	token_prefix TEXT DEFAULT ''
 );
 

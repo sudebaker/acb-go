@@ -89,7 +89,40 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 	if len(token) < 8 {
 		return nil, nil
 	}
-	prefix := token[:8]
+
+	// Strategy: try prefix lookup first (fast path), then fall back to full scan.
+	// The prefix is derived from the Argon2id hash which uses a random salt,
+	// so re-hashing produces a different prefix. We try both the hash-based
+	// prefix AND the plaintext prefix for backward compatibility.
+	_, hashPrefix, err := hashToken(token)
+	if err != nil {
+		return nil, fmt.Errorf("hash token for lookup: %w", err)
+	}
+	plainPrefix := token[:8]
+
+	// Try hash-based prefix first
+	agent, err := r.getByTokenPrefix(token, hashPrefix)
+	if err != nil {
+		return nil, err
+	}
+	if agent != nil {
+		return agent, nil
+	}
+
+	// Try plaintext prefix (for tokens registered with older code or admin tokens)
+	agent, err = r.getByTokenPrefix(token, plainPrefix)
+	if err != nil {
+		return nil, err
+	}
+	if agent != nil {
+		return agent, nil
+	}
+
+	// Last resort: full table scan (handles edge cases where prefix doesn't match)
+	return r.getByTokenFullScan(token)
+}
+
+func (r *AgentRepo) getByTokenPrefix(token, prefix string) (*models.Agent, error) {
 	rows, err := r.db.Query(
 		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE token_prefix = ?`, prefix,
 	)
@@ -97,7 +130,21 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 		return nil, fmt.Errorf("query agents: %w", err)
 	}
 	defer rows.Close()
+	return r.scanMatchingAgent(rows, token)
+}
 
+func (r *AgentRepo) getByTokenFullScan(token string) (*models.Agent, error) {
+	rows, err := r.db.Query(
+		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query all agents: %w", err)
+	}
+	defer rows.Close()
+	return r.scanMatchingAgent(rows, token)
+}
+
+func (r *AgentRepo) scanMatchingAgent(rows *sql.Rows, token string) (*models.Agent, error) {
 	for rows.Next() {
 		var a models.Agent
 		var heartbeat sql.NullString
@@ -115,10 +162,10 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 		hashMatch, hashErr := verifyToken(token, storedToken)
 		if hashMatch && hashErr == nil {
 			match = true
-	} else {
-		// Fallback: plaintext comparison (for migration from pre-hash tokens)
-		match = subtle.ConstantTimeCompare([]byte(token), []byte(storedToken)) == 1
-	}
+		} else {
+			// Fallback: plaintext comparison (for migration from pre-hash tokens)
+			match = subtle.ConstantTimeCompare([]byte(token), []byte(storedToken)) == 1
+		}
 
 		if match {
 			a.Token = ""

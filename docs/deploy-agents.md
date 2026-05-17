@@ -394,3 +394,8 @@ acb-go/
 ├── .env.example
 └── main.go
 ```
+## Notas
+
+- El buzón de intercambio (`~/buzon_intercambio/`) está marcado como **FUTURE DEPRECATED**. Las comunicaciones entre agentes deben ir por ACB.
+- Los deliverables se entregan como artifacts via `POST /tasks/{id}/artifacts` cuando sea posible.
+- El buzón solo se mantiene para la transición.
