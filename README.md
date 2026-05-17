@@ -168,11 +168,15 @@ internal/
   models/            — Task, Gate, Agent structs
   redis/             — Publisher with 7 event types, fire-and-forget
 tests/
-  e2e_test.go        — full task lifecycle integration test
+```
 docs/
   api-reference.md       — complete API documentation
-  agent-integration.md   — agent developer guide
+  agent-integration.md   — agent developer guide (API flows)
+  deploy-agents.md       — full agent deployment & ACB cron setup guide
   dispatcher-architecture.md — dispatch design decision record
+scripts/
+  acb-task-checker.py    — agent-side script: poll ACB for assigned tasks
+  provision-agent.sh     — automate agent provisioning with ACB cronjob
 ```
 
 ## Docker
