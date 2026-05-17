@@ -8,6 +8,9 @@ services:
     env_file: .env
     volumes:
       - acb-data:/var/lib/acb
+    depends_on:
+      redis:
+        condition: service_healthy
     restart: unless-stopped
     deploy:
       resources:
@@ -29,5 +32,38 @@ services:
       retries: 3
       start_period: 10s
 
+  redis:
+    image: redis:7-alpine
+    container_name: acb-redis
+    network_mode: host
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    command: >
+      redis-server
+      --bind 127.0.0.1
+      --port 6379
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --save 300 1
+      --appendonly yes
+      --appendfsync everysec
+      --loglevel notice
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+      start_period: 5s
+
 volumes:
   acb-data:
+  redis-data:
