@@ -25,7 +25,7 @@ func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
 	}
 
 	// Encrypt webhook_secret for at-rest protection
-	encryptedSecret, err := encryptWebhookSecret(agent.WebhookSecret)
+	encryptedSecret, err := db.EncryptWebhookSecret(agent.WebhookSecret)
 	if err != nil {
 		return fmt.Errorf("encrypt webhook secret: %w", err)
 	}

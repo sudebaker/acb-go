@@ -164,7 +164,7 @@ func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, ol
 	// Sign with HMAC-SHA256 of timestamp + body (prevents replay attacks)
 	if agent.WebhookSecret != "" {
 		// Decrypt the webhook secret for HMAC signing
-		plaintextSecret, err := decryptWebhookSecret(agent.WebhookSecret)
+		plaintextSecret, err := db.DecryptWebhookSecret(agent.WebhookSecret)
 		if err != nil {
 			log.Printf("[dispatcher] failed to decrypt webhook secret for agent %s: %v", agent.Name, err)
 			return
@@ -239,7 +239,7 @@ func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt 
 	// Sign with HMAC-SHA256 of timestamp + body (matches Hermes webhook validation, prevents replay)
 	if agent.WebhookSecret != "" {
 		// Decrypt the webhook secret for HMAC signing
-		plaintextSecret, err := decryptWebhookSecret(agent.WebhookSecret)
+		plaintextSecret, err := db.DecryptWebhookSecret(agent.WebhookSecret)
 		if err != nil {
 			log.Printf("[dispatcher] failed to decrypt webhook secret for agent %s: %v", agent.Name, err)
 			return

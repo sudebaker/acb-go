@@ -58,7 +58,7 @@ func getCipher() (cipher.AEAD, error) {
 
 // encryptWebhookSecret encrypts a webhook secret using AES-256-GCM.
 // Returns base64-encoded ciphertext in format: base64(nonce|ciphertext).
-func encryptWebhookSecret(plaintext string) (string, error) {
+func EncryptWebhookSecret(plaintext string) (string, error) {
 	gcm, err := getCipher()
 	if err != nil {
 		// If cipher not initialized, return plaintext (dev mode)
@@ -77,7 +77,7 @@ func encryptWebhookSecret(plaintext string) (string, error) {
 
 // decryptWebhookSecret decrypts a webhook secret from base64-encoded ciphertext.
 // Format: base64(nonce|ciphertext).
-func decryptWebhookSecret(encoded string) (string, error) {
+func DecryptWebhookSecret(encoded string) (string, error) {
 	gcm, err := getCipher()
 	if err != nil {
 		// If cipher not initialized, assume plaintext (dev mode)
