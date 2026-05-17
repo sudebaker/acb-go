@@ -135,7 +135,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get task first to check required skills
+	// Get task first to check required skills and old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
 		WriteError(w, 500, "get_failed", err.Error())
@@ -145,6 +145,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 404, "not_found", "task not found")
 		return
 	}
+	oldStatus := task.Status
 
 	// Validate agent has required skills
 	if len(task.RequiredSkills) > 0 {
@@ -192,13 +193,30 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 
 	go h.pub.PublishTaskEvent(acbredis.EventTaskClaimed, id, input.Assignee, "", "", task.RequiredSkills...)
 
+	// Notify agent of status change
+	if h.dispatcher != nil {
+		go h.dispatcher.NotifyStatusChange(task, oldStatus, "claimed", "task_claimed")
+	}
+
 	WriteJSON(w, 200, task)
 }
 
 func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	task, err := h.taskRepo.StartTask(id)
+	// Get task before starting to capture old status
+	task, err := h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+	oldStatus := task.Status
+
+	task, err = h.taskRepo.StartTask(id)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -210,6 +228,11 @@ func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go h.pub.PublishTaskEvent(acbredis.EventTaskStarted, id, task.Assignee, "", "", task.RequiredSkills...)
+
+	// Notify agent of status change
+	if h.dispatcher != nil {
+		go h.dispatcher.NotifyStatusChange(task, oldStatus, "in_progress", "task_started")
+	}
 
 	WriteJSON(w, 200, task)
 }
@@ -230,7 +253,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get task before blocking to include in webhook
+	// Get task before blocking to include in webhook and capture old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
 		WriteError(w, 500, "get_task_failed", err.Error())
@@ -240,6 +263,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 404, "not_found", "task not found")
 		return
 	}
+	oldStatus := task.Status
 
 	if _, err := h.taskRepo.BlockTask(id); err != nil {
 		var ce *db.ConflictError
@@ -248,6 +272,13 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		} else {
 			WriteError(w, 409, "block_failed", err.Error())
 		}
+		return
+	}
+
+	// Get updated task after blocking
+	task, err = h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_task_failed", err.Error())
 		return
 	}
 
@@ -263,6 +294,11 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go h.pub.PublishTaskEvent(acbredis.EventTaskBlocked, id, task.Assignee, input.GateID, "", task.RequiredSkills...)
+
+	// Notify agent of status change
+	if h.dispatcher != nil {
+		go h.dispatcher.NotifyStatusChange(task, oldStatus, "blocked", "task_blocked")
+	}
 
 	WriteJSON(w, 200, task)
 }
@@ -282,7 +318,7 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get task before unblocking to include in webhook
+	// Get task before unblocking to capture old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
 		WriteError(w, 500, "get_task_failed", err.Error())
@@ -292,6 +328,7 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 404, "not_found", "task not found")
 		return
 	}
+	oldStatus := task.Status
 
 	if err := h.gateRepo.ResolveGate(input.GateID); err != nil {
 		WriteError(w, 409, "resolve_failed", err.Error())
@@ -302,7 +339,20 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, 500, "update_failed", err.Error())
 		return
 	}
+
+	// Get updated task after unblocking
+	task, err = h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_task_failed", err.Error())
+		return
+	}
+
 	go h.pub.PublishTaskEvent(acbredis.EventTaskUnblock, id, task.Assignee, input.GateID, "")
+
+	// Notify agent of status change
+	if h.dispatcher != nil {
+		go h.dispatcher.NotifyStatusChange(task, oldStatus, "in_progress", "task_unblocked")
+	}
 
 	WriteJSON(w, 200, task)
 }
@@ -318,7 +368,19 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskRepo.CompleteTask(id, input.Summary)
+	// Get task before completing to capture old status
+	task, err := h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_task_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+	oldStatus := task.Status
+
+	task, err = h.taskRepo.CompleteTask(id, input.Summary)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -330,6 +392,11 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go h.pub.PublishTaskEvent(acbredis.EventTaskDone, id, task.Assignee, "", input.Summary, task.RequiredSkills...)
+
+	// Notify agent of status change
+	if h.dispatcher != nil {
+		go h.dispatcher.NotifyStatusChange(task, oldStatus, "completed", "task_completed")
+	}
 
 	WriteJSON(w, 200, task)
 }
@@ -345,7 +412,19 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	task, err := h.taskRepo.FailTask(id, input.Reason)
+	// Get task before failing to capture old status
+	task, err := h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_task_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+	oldStatus := task.Status
+
+	task, err = h.taskRepo.FailTask(id, input.Reason)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -357,6 +436,11 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, task.Assignee, "", input.Reason, task.RequiredSkills...)
+
+	// Notify agent of status change
+	if h.dispatcher != nil {
+		go h.dispatcher.NotifyStatusChange(task, oldStatus, "failed", "task_failed")
+	}
 
 	WriteJSON(w, 200, task)
 }

@@ -145,17 +145,21 @@ cron_mode: allow          # Permite que Hermes ejecute cronjobs
 
 ## 4. Instalar el Script ACB Task Checker
 
-El script `acb-task-checker.py` se copia dentro del contenedor en `/opt/data/`:
+El script `acb-task-checker.py` se copia dentro del contenedor en `/opt/data/scripts/`:
+
+> ⚠️ Hermes resuelve el campo `script` de jobs.json como `/opt/data/scripts/<script>`. Debe estar en ese subdirectorio.
 
 ```bash
-# Desde el host, copiar el script al directorio data del agente
-cp scripts/acb-task-checker.py ~/src/{agent}-agent/data/acb-task-checker.py
+# Desde el host, copiar el script
+mkdir -p ~/src/{agent}-agent/data/scripts/
+cp scripts/acb-task-checker.py ~/src/{agent}-agent/data/scripts/acb-task-checker.py
 ```
 
 O mediante Docker:
 
 ```bash
-docker cp acb-task-checker.py {container}:/opt/data/acb-task-checker.py
+docker exec {container} mkdir -p /opt/data/scripts/
+docker cp acb-task-checker.py {container}:/opt/data/scripts/acb-task-checker.py
 ```
 
 El script consulta el ACB por tareas asignadas al agente y las muestra en formato legible. Si no hay tareas, sale silenciosamente (sin output).
@@ -181,7 +185,7 @@ Añadir a `/opt/data/cron/jobs.json`:
 {
   "id": "<unique-id>",
   "name": "acb-task-check",
-  "prompt": "Ejecuta python3 /opt/data/acb-task-checker.py <AGENT_NAME> con la herramienta terminal. Si el script dice que hay tareas pendientes, empieza a trabajar en ellas. Si no hay nada, responde HEARTBEAT_OK.",
+  "prompt": "Ejecuta python3 /opt/data/scripts/acb-task-checker.py <AGENT_NAME> con la herramienta terminal. Si el script no devuelve nada (sin output), responde exactamente [SILENT] y nada más. Si devuelve tareas, empieza a trabajar en ellas y responde con tu progreso.",
   "skills": [],
   "skill": null,
   "model": null,

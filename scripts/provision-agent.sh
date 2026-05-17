@@ -59,9 +59,10 @@ else
 fi
 
 # 4. Copy checker script
-echo "Copiando acb-task-checker.py..."
-docker cp "${SCRIPT_DIR}/acb-task-checker.py" "${CONTAINER}:/opt/data/acb-task-checker.py"
-docker exec "${CONTAINER}" chmod +x /opt/data/acb-task-checker.py
+# 1. Copiar el checker script
+docker exec "${CONTAINER}" mkdir -p /opt/data/scripts/
+docker cp "${SCRIPT_DIR}/acb-task-checker.py" "${CONTAINER}:/opt/data/scripts/acb-task-checker.py"
+docker exec "$CONTAINER" chmod +x /opt/data/scripts/acb-task-checker.py
 echo "✅ Script copiado"
 
 # 5. Create cron directory if needed
@@ -93,7 +94,7 @@ if existing:
     print(f'⚠️  ACB cronjob ya existe (id={existing[0][\"id\"]}), actualizando...')
     # Update existing job
     job = existing[0]
-    job['prompt'] = f'Ejecuta python3 /opt/data/acb-task-checker.py {agent_name} con la herramienta terminal. Si el script dice que hay tareas pendientes, empieza a trabajar en ellas. Si no hay nada, responde HEARTBEAT_OK.'
+    job['prompt'] = f'Ejecuta python3 /opt/data/scripts/acb-task-checker.py {agent_name} con la herramienta terminal. Si el script no devuelve nada (sin output), responde exactamente [SILENT] y nada más. Si devuelve tareas, empieza a trabajar en ellas y responde con tu progreso.'
     job['enabled'] = True
     job['state'] = 'scheduled'
 else:
@@ -101,7 +102,7 @@ else:
     job = {
         'id': uuid.uuid4().hex[:12],
         'name': 'acb-task-check',
-        'prompt': f'Ejecuta python3 /opt/data/acb-task-checker.py {agent_name} con la herramienta terminal. Si el script dice que hay tareas pendientes, empieza a trabajar en ellas. Si no hay nada, responde HEARTBEAT_OK.',
+        'prompt': f'Ejecuta python3 /opt/data/scripts/acb-task-checker.py {agent_name} con la herramienta terminal. Si el script no devuelve nada (sin output), responde exactamente [SILENT] y nada más. Si devuelve tareas, empieza a trabajar en ellas y responde con tu progreso.',
         'skills': [],
         'skill': None,
         'model': None,
@@ -153,10 +154,10 @@ docker restart "${CONTAINER}"
 
 echo ""
 echo "=== ✅ Agente ${AGENT_NAME} provisionado ==="
-echo "  - Script: /opt/data/acb-task-checker.py"
-echo "  - Cronjob: */15 * * * * (cada 15 minutos)"
+echo "  - Script: /opt/data/scripts/acb-task-checker.py"
+echo "  - Cronjob: */15 * * * * (cada 15 minutos, silencioso si no hay tareas)"
 echo "  - El primer run será en el próximo ciclo de 15 min"
 echo ""
 echo "Para verificar:"
-echo "  docker exec ${CONTAINER} python3 /opt/data/acb-task-checker.py ${AGENT_NAME}"
+echo "  docker exec ${CONTAINER} python3 /opt/data/scripts/acb-task-checker.py ${AGENT_NAME}"
 echo "  docker exec ${CONTAINER} cat /opt/data/cron/jobs.json | python3 -m json.tool"

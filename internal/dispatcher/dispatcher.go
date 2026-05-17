@@ -38,6 +38,9 @@ type WebhookPayload struct {
 	Action    string      `json:"action"`
 	Task      models.Task `json:"task"`
 	Timestamp string      `json:"timestamp"`
+	// Optional: previous state info for status change notifications
+	OldStatus string      `json:"old_status,omitempty"`
+	NewStatus string      `json:"new_status,omitempty"`
 }
 
 // HTTPDoer abstracts http.Client.Do for testability.
@@ -102,6 +105,87 @@ func (d *Dispatcher) DispatchNewTask(task *models.Task) {
 		}
 		go d.sendWebhookWithSemaphore(agent, task, 0)
 	}
+}
+
+// NotifyStatusChange sends a webhook to the assigned agent when task status changes.
+// Actions: "task_claimed", "task_started", "task_blocked", "task_completed", "task_failed"
+func (d *Dispatcher) NotifyStatusChange(task *models.Task, oldStatus, newStatus, action string) {
+	if task.Assignee == "" {
+		return // No agent to notify
+	}
+
+	agent, err := d.agentRepo.GetByName(task.Assignee)
+	if err != nil {
+		log.Printf("[dispatcher] error getting agent %s: %v", task.Assignee, err)
+		return
+	}
+	if agent == nil || agent.WebhookURL == "" {
+		return // Agent not found or no webhook configured
+	}
+
+	go d.sendStatusWebhook(*agent, task, oldStatus, newStatus, action)
+}
+
+// sendStatusWebhook sends a status change notification to a single agent.
+func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, oldStatus, newStatus, action string) {
+	d.semaphore <- struct{}{}
+	defer func() {
+		<-d.semaphore
+	}()
+
+	// Validate webhook URL before sending
+	if err := ValidateWebhookURL(agent.WebhookURL); err != nil {
+		log.Printf("[dispatcher] invalid webhook URL for agent %s: %v", agent.Name, err)
+		return
+	}
+
+	payload := WebhookPayload{
+		Action:    action,
+		Task:      *task,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		OldStatus: oldStatus,
+		NewStatus: newStatus,
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		log.Printf("[dispatcher] marshal payload for agent %s: %v", agent.Name, err)
+		return
+	}
+
+	// Create request with timestamp header
+	req, err := http.NewRequest("POST", agent.WebhookURL, bytes.NewReader(body))
+	if err != nil {
+		log.Printf("[dispatcher] create request for agent %s: %v", agent.Name, err)
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Webhook-Timestamp", payload.Timestamp)
+
+	// Sign with HMAC-SHA256 of the body
+	if agent.WebhookSecret != "" {
+		mac := hmac.New(sha256.New, []byte(agent.WebhookSecret))
+		mac.Write(body)
+		sig := hex.EncodeToString(mac.Sum(nil))
+		req.Header.Set("X-Webhook-Signature", sig)
+	}
+
+	// Set timeout for this request
+	ctx, cancel := context.WithTimeout(context.Background(), httpTimeout)
+	defer cancel()
+	req = req.WithContext(ctx)
+
+	resp, err := d.httpClient.Do(req)
+	if err != nil {
+		log.Printf("[dispatcher] status webhook to agent %s failed: %v", agent.Name, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		log.Printf("[dispatcher] status webhook to agent %s returned status %d", agent.Name, resp.StatusCode)
+		return
+	}
+	log.Printf("[dispatcher] status webhook to agent %s succeeded (action=%s, status=%s)", agent.Name, action, newStatus)
 }
 
 // sendWebhook POSTs the task to an agent's webhook URL.
