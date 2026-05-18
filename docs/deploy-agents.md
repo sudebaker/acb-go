@@ -10,19 +10,20 @@ Guía completa para poner en marcha los agentes Hermes con integración ACB (Age
 ┌─────────────┐     REST API      ┌─────────┐
 │   Amanda    │ ──────────────────→│   ACB   │
 │ (Orquestador│     localhost:8090  │  (Go)   │
-│   + Team    │ ←─── Webhooks ──── │         │
-│   Delta)    │                    └────┬────┘
-└──────┬──────┘                         │
+│   Delta)    │ ←──── state ──────│         │
+└──────┬──────┘     watcher        └────┬────┘
        │                                │
-       │  Cada agente consulta ACB      │
-       │  cada 15 min via cronjob      │
+       │  Dispatch por webhook          │ Cada agente hace
+       │  + polling cada 15min          │ claim/start/complete
        │                                │
   ┌────┴──────┬──────────┬──────────┐
   │           │          │          │
   ▼           ▼          ▼          ▼
-Quique      Braulio   Armando    Amanda
-(8647)      (8645)    (8646)     (8648)
+Quique      Braulio   Armando
+(:8647)     (:8645)    (:8646)
 
+acb-state-watcher (cada 15min, no_agent)
+  → Notifica a Jesús solo cambios reales (nueva/completada/fallida/blocked)
 ```
 
 Cada agente es un contenedor Docker corriendo Hermes Agent con:
@@ -373,7 +374,8 @@ En red interna, poner `ACB_ALLOW_HTTP_WEBHOOKS=1` en el `.env` del ACB.
 | Quique | 8647 | `<ACB_AGENT_QUIQUE_TOKEN>` |
 | Braulio | 8645 | `<ACB_AGENT_BRAULIO_TOKEN>` |
 | Armando | 8646 | `<ACB_AGENT_ARMANDO_TOKEN>` |
-| Amanda | 8648 | `<ACB_ADMIN_TOKEN>` (token maestro) |
+
+Amanda usa `ACB_ADMIN_TOKEN` para crear tareas y consultar estado (no es agente registrado, es orquestador).
 
 Todos usan `network_mode: host` → comparten `localhost`.
 
@@ -383,26 +385,30 @@ Todos usan `network_mode: host` → comparten `localhost`.
 
 ## 10. Scripts de Automatización
 
-El ecosistema ACB tiene cuatro scripts complementarios que corren como cronjobs de Amanda (Hermes orquestador):
+El ecosistema ACB tiene dos componentes de automatización:
 
-| Script | Función | Cronjob | Método |
-|--------|---------|---------|--------|
-| `acb-status-monitor.py` | Monitor general del ACB — notifica cambios de estado de tareas | `acb-monitor` (cada 15min) | `no_agent`, script-only |
-| `acb-poll-and-notify.py` | Polling proactivo — reclama tareas pendientes por skill match y notifica al agente vía webhook | `acb-poll-and-notify` (cada 15min) | `no_agent`, script-only |
-| `acb-notify-agents.sh` | Notifica a cada agente cuando cambian sus tareas (filtro por assignee), evita spam con hash de estado | `acb-notify-agents` (cada 15min) | `no_agent`, script-only |
-| `acb-task-checker.py` | Checker pasivo — cada agente consulta sus tareas asignadas (corre dentro del contenedor del agente) | Dentro de cada contenedor de agente | LLM-driven |
+| Script | Función | Dónde corre | Método |
+|--------|---------|-------------|--------|
+| `acb-state-watcher.py` | Notifica a Jesús (vía Telegram) solo cuando hay cambios reales en tareas (nueva, completada, fallida, blocked) | Host (Amanda) | `no_agent`, script-only |
+| `acb-task-checker.py` | Checker pasivo — cada agente consulta sus tareas asignadas | Dentro de cada contenedor de agente | LLM-driven |
 
 ### Flujo de automatización
 
 ```
-Cada 15 minutos:
-  1. acb-poll-and-notify.py → busca tareas pending, las reclama por skill match, notifica vía webhook
-  2. acb-notify-agents.sh  → si las tareas de un agente cambiaron desde la última notificación, envía webhook
-  3. acb-status-monitor.py  → si cambió el estado general del ACB, notifica a Jesús via Telegram
+Amanda crea tarea → ACB guarda y dispatcha webhook al agente con skills match
+                                              │
+                                              ├── Canal 1: Webhook (from-amanda)
+                                              │   Agente Hermes recibe notificación y procesa
+                                              │
+                                              └── Canal 2: Polling cada 15min
+                                                  acb-task-checker.py consulta tareas del agente
 
-Dentro de cada agente:
-  acb-task-checker.py → consulta tareas del agente, salida legible para que el LLM empiece a trabajar
+Agente: claim → start → work → complete/fail
+                                    │
+                         acb-state-watcher detecta cambio → Notifica a Jesús por Telegram
 ```
+
+> **Diseño:** ACB hace dispatch por webhook cuando se crea una tarea. Los agentes tienen **dos canales** para recibirla: webhook directo y polling cada 15min como fallback. Amanda solo recibe notificaciones cuando algo cambia (no spam).
 
 ### Tokens de autenticación
 
@@ -417,9 +423,9 @@ Todos los scripts usan variables de entorno para los tokens (ver `.env.example`)
 
 > ⚠️ Todos los tokens se configuran mediante variables de entorno (ver `.env.example`). No hay tokens hardcodeados en los scripts.
 
-### Scripts de Amanda (host)
+### Script de Amanda (host)
 
-Los scripts `acb-poll-and-notify.py`, `acb-notify-agents.sh` y `acb-status-monitor.py` corren en el host como cronjobs de Hermes (`no_agent=true`). Se encuentran en `~/.hermes/scripts/` y también se copian al repo `acb-go/scripts/` para versionado.
+`acb-state-watcher.py` corre en el host como cronjob de Hermes (`no_agent=true`). Compara el estado actual del ACB con el estado anterior (`/tmp/acb-watcher-state.json`) y solo genera output cuando hay cambios — sin cambios, es silencioso (no notifica). Se encuentra en `~/.hermes/scripts/`.
 
 ---
 
@@ -428,22 +434,22 @@ Los scripts `acb-poll-and-notify.py`, `acb-notify-agents.sh` y `acb-status-monit
 ```
 acb-go/
 ├── scripts/
-│   ├── acb-status-monitor.py   # Monitor general del ACB
-│   ├── acb-poll-and-notify.py  # Polling proactivo — reclama y notifica
-│   ├── acb-notify-agents.sh    # Notificaciones por change-detection por agente
-│   ├── acb-task-checker.py     # Checker pasivo para agentes
-│   ├── gen-env.sh              # Generador de .env
-│   ├── provision-agent.sh      # Provisionamiento de nuevos agentes
-│   └── test.sh                 # Tests E2E
+│   ├── acb-state-watcher.py   # Notificador de cambios (reemplaza 3 scripts eliminados)
+│   ├── acb-task-checker.py    # Checker pasivo para agentes
+│   ├── gen-env.sh             # Generador de .env
+│   ├── provision-agent.sh     # Provisionamiento de nuevos agentes
+│   └── test.sh                # Tests E2E
 ├── docs/
 │   ├── deploy-agents.md       # Esta guía
 │   ├── api-reference.md       # Referencia API del ACB
-│   ├── agent-integration.md  # Guía de integración de agentes
+│   ├── agent-integration.md   # Guía de integración de agentes
 │   └── dispatcher-architecture.md
 ├── docker-compose.yml
 ├── .env.example
 └── main.go
 ```
+
+> **Nota:** Los scripts `acb-status-monitor.py`, `acb-poll-and-notify.py` y `acb-notify-agents.sh` fueron eliminados en mayo 2026. Sus funciones están consolidadas en `acb-state-watcher.py`.
 ## Notas
 
 - El buzón de intercambio (`~/buzon_intercambio/`) está marcado como **FUTURE DEPRECATED**. Las comunicaciones entre agentes deben ir por ACB.
