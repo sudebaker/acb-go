@@ -172,6 +172,10 @@ python3 /opt/data/scripts/acb-task-checker.py <agent_name>
 # Ejemplo: python3 /opt/data/scripts/acb-task-checker.py agent-1
 ```
 
+The script shows active tasks with clear status indicators and includes the specific curl commands each agent needs to close the loop (claim → start → complete/fail).
+
+> **Critical rule:** Agents MUST mark tasks as `completed` or `failed` when done. Leaving tasks in `in_progress` after finishing work is a broken state. The HEARTBEAT.md in each agent enforces this cycle.
+
 ---
 
 ## 5. Crear el Cronjob ACB en cada Agente
@@ -186,7 +190,7 @@ Añadir a `/opt/data/cron/jobs.json`:
 {
   "id": "<unique-id>",
   "name": "acb-task-check",
-  "prompt": "Ejecuta python3 /opt/data/scripts/acb-task-checker.py <AGENT_NAME> con la herramienta terminal. Si el script no devuelve nada (sin output), responde exactamente [SILENT] y nada más. Si devuelve tareas, empieza a trabajar en ellas y responde con tu progreso.",
+  "prompt": "Execute: python3 /opt/data/scripts/acb-task-checker.py <AGENT_NAME>. If no tasks (script returns nothing), respond [SILENT]. If tasks found, work on them. CRITICAL: when done, mark task completed: curl -X POST http://localhost:8090/tasks/<TASK_ID>/complete -H 'Authorization: Bearer <YOUR_TOKEN>' -H 'Content-Type: application/json' -d '{\"summary\": \"what you did\"}'. NEVER leave tasks in_progress after finishing. Always close the loop: claim-start-complete/fail. Report progress.",
   "skills": [],
   "skill": null,
   "model": null,
@@ -261,7 +265,7 @@ with open('/tmp/acb_cron_job.json') as f:
     template = json.load(f)
 template['id'] = job_id
 template['name'] = 'acb-task-check'
-template['prompt'] = f'Ejecuta python3 /opt/data/acb-task-checker.py ${AGENT_NAME} con la herramienta terminal. Si el script dice que hay tareas pendientes, empieza a trabajar en ellas. Si no hay nada, responde HEARTBEAT_OK.'
+template['prompt'] = f'Execute: python3 /opt/data/scripts/acb-task-checker.py {AGENT_NAME}. If no tasks, respond [SILENT]. If tasks found, work on them. CRITICAL: when done, mark completed: curl -X POST http://localhost:8090/tasks/<TASK_ID>/complete -H "Authorization: Bearer <YOUR_TOKEN>" -H "Content-Type: application/json" -d \'{{"summary": "what you did"}}\'. NEVER leave tasks in_progress. Always: claim-start-complete/fail.'
 template['schedule'] = {'kind': 'cron', 'expr': '*/15 * * * *', 'display': '*/15 * * * *'}
 template['schedule_display'] = '*/15 * * * *'
 template['origin']['chat_id'] = '${CHAT_ID}'
@@ -329,7 +333,8 @@ curl -X POST http://localhost:8090/tasks/{task_id}/complete \
 1. **Orchestrator crea tarea** → ACB guarda tarea y dispatcha webhook al agente
 2. **Cada 15 minutos** → El cronjob del agente ejecuta `acb-task-checker.py`
 3. **Si hay tareas** → El agente lee el output y empieza a trabajar
-4. **El agente actualiza estados** → `claim` → `start` → `complete`/`fail`
+4. **El agente actualiza estados** → `claim` → `start` → **`complete`/`fail`** ← **CRITICAL: must close the loop**
+5. **acb-state-watcher** → Detecta cambio de estado y notifica al operador por Telegram
 
 ---
 
