@@ -301,11 +301,11 @@ Register or update an agent with webhook URL for task dispatch.
 **Request body:**
 ```json
 {
-  "name": "braulio",
+  "name": "agent-2",
   "port": 8645,
-  "token": "braulio-token",
+  "token": "<AGENT_TOKEN>",
   "skills": ["go", "testing", "devops"],
-  "webhook_url": "http://localhost:8645/webhooks/amanda",
+  "webhook_url": "http://localhost:8645/webhooks/orchestrator",
   "webhook_secret": "<WEBHOOK_SECRET>"
 }
 ```
@@ -601,11 +601,11 @@ curl -s "http://localhost:8090/tasks?status=pending" \
 
 # Register an agent with webhook URL
 curl -s -X POST http://localhost:8090/agents \
-  -H "Authorization: Bearer braulio-token" \
+  -H "Authorization: Bearer <AGENT_TOKEN>" \
   -H "Content-Type: application/json" \
-  -d '{"name":"braulio","port":8645,"token":"<AGENT_TOKEN>","skills":["go","testing"],"webhook_url":"http://localhost:8645/webhooks/amanda","webhook_secret":"<WEBHOOK_SECRET>"}'
+  -d '{"name":"agent-2","port":8645,"token":"<AGENT_TOKEN>","skills":["go","testing"],"webhook_url":"http://localhost:8645/webhooks/orchestrator","webhook_secret":"<WEBHOOK_SECRET>"}'
 
 # Get next matching task for polling
-curl -s "http://localhost:8090/tasks/dispatch?agent=braulio" \
-  -H "Authorization: Bearer braulio-token"
+curl -s "http://localhost:8090/tasks/dispatch?agent=agent-2" \
+  -H "Authorization: Bearer <AGENT_TOKEN>"
 ```

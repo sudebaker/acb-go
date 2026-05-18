@@ -1,10 +1,10 @@
 # ACB Security Audit Report
 
-**Author:** Armando Jaleo  
+**Author:** Agent-3 Security Audit  
 **Date:** 2026-05-15  
 **Repo:** `/home/amphora/src/acb-go`  
 **Priority:** 6  
-**Cross-reference:** Docker review (`braulio-acb-docker-review.md`)
+**Cross-reference:** Docker review (`agent-2-acb-docker-review.md`)
 
 ---
 
@@ -105,7 +105,7 @@ sig := hex.EncodeToString(mac.Sum(nil))
 
 `POST /agents` calls `UpsertAgent` — any authenticated agent can register with the same name as another agent and **overwrite their token**. The `ON CONFLICT(name) DO UPDATE SET token = excluded.token` replaces the original agent's token.
 
-**Risk:** A malicious agent registers as `amanda` with their own token and takes control of all Amanda's tasks. The original token stops working.
+**Risk:** A malicious agent registers as `orchestrator` with their own token and takes control of all orchestrator's tasks. The original token stops working.
 
 **Fix:**
 - Verify that the registering agent is the owner of the name (compare with `X-Agent-Name` from auth middleware).
@@ -175,7 +175,7 @@ In production, this exposes query structure and values (including `assignee`, `s
 
 **Fix:** Move to conditional `log.Printf` with DEBUG level, or remove in production.
 
-**Status:** 🔴 Open (note: Quique's revert removed this, but it came back with Braulio's WIP)
+**Status:** 🔴 Open (note: agent-1's revert removed this, but it came back with agent-2's WIP)
 
 ---
 
@@ -225,4 +225,4 @@ The server runs plain HTTP. Without a TLS reverse proxy, all communications (inc
 
 ---
 
-*End of report. Armando Jaleo — 72h uptime, powered by Cheetos and paranoia.*
+*End of report. Agent-3 Security Audit — 72h uptime, powered by Cheetos and paranoia.*

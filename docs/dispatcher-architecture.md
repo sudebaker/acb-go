@@ -1,7 +1,7 @@
 # ACB Dispatcher Architecture Analysis
 
 **Date:** 2025-05-16  
-**Context:** El dispatcher Python (`scripts/acb_dispatcher.py`) ejecuta como systemd service con polling cada 30s. Solo funciona para agents Hermes (webhook `/webhooks/amanda`). El objetivo es que **CUALQUIER tipo de agente** pueda recibir tareas del ACB.
+**Context:** El dispatcher Python (`scripts/acb_dispatcher.py`) ejecuta como systemd service con polling cada 30s. Solo funciona para agents Hermes (webhook `/webhooks/orchestrator`). El objetivo es que **CUALQUIER tipo de agente** pueda recibir tareas del ACB.
 
 ---
 
@@ -12,12 +12,12 @@ ACB (Go) ──Redis Pub/Sub──→ tasks:pending channel
                               ↓ (nobody subscribes)
 ACB (Go) ──HTTP API──→ GET /tasks?status=pending
                               ↓
-acb_dispatcher.py (systemd) ──poll every 30s──→ match skills → webhook → Hermes /webhooks/amanda
+acb_dispatcher.py (systemd) ──poll every 30s──→ match skills → webhook → Hermes /webhooks/orchestrator
 ```
 
 **Problems:**
 - `AGENTS` dict hardcoded with ports, secrets, tokens
-- Only knows about `/webhooks/amanda` (Hermes-specific endpoint)
+- Only knows about `/webhooks/orchestrator` (Hermes-specific endpoint)
 - Skill matching logic lives in Python, disconnected from ACB's Go skill validation
 - No persistence of dispatch state (in-memory `_dispatched` set lost on restart)
 - Linux-only (systemd), no Windows/macOS alternative
@@ -38,7 +38,7 @@ acb_dispatcher.py (systemd) ──poll every 30s──→ match skills → webho
 | Simplicity | ✅ 4/5 | 200 lines of Python, easy to understand |
 | Coupling | ❌ 1/5 | Hardcoded agents, Hermes-specific webhook format |
 | Resilience | ⚠️ 2/5 | In-memory state, no retry, single process |
-| Multi-agent | ❌ 1/5 | Only works with Hermes agents via `/webhooks/amanda` |
+| Multi-agent | ❌ 1/5 | Only works with Hermes agents via `/webhooks/orchestrator` |
 
 **Verdict:** The current approach is **ad-hoc**. Systemd is fine for process management, but the dispatcher logic itself is the problem — it's a hardcoded bridge between ACB and one specific agent type.
 
@@ -49,7 +49,7 @@ acb_dispatcher.py (systemd) ──poll every 30s──→ match skills → webho
 **How it works:** ACB stores `webhook_url` per agent. On task creation, ACB POSTs the task to each relevant agent's webhook URL.
 
 ```
-Agent registers: POST /agents {name: "braulio", webhook_url: "http://localhost:8645/webhooks/amanda", skills: [...]}
+Agent registers: POST /agents {name: "agent-2", webhook_url: "http://localhost:8645/webhooks/orchestrator", skills: [...]}
 ACB creates task → looks up matching agents → POSTs task to their webhook_url
 ```
 
@@ -116,7 +116,7 @@ Agent (any language with Redis client) subscribes to relevant channels
 **How it works:** Each agent periodically calls `GET /tasks?status=pending&assignee=me` or a new `GET /tasks/next` endpoint. Like current approach but ACB-centric instead of dispatcher-centric.
 
 ```
-Agent heartbeat: POST /agents/heartbeat {name: "braulio"}
+Agent heartbeat: POST /agents/heartbeat {name: "agent-2"}
 Agent polls: GET /tasks?status=pending → claims matching ones
 ```
 
@@ -225,7 +225,7 @@ The dispatcher should not exist as a separate component. ACB itself should handl
         │            │  │             │  │               │
         │ Webhook:   │  │ Webhook:    │  │ No webhook:  │
         │ /webhooks/ │  │ /dispatch   │  │ polls every  │
-        │  amanda    │  │             │  │ 60s           │
+        │  orchestrator │  │             │  │ 60s           │
         └────────────┘  └─────────────┘  └──────────────┘
 ```
 
@@ -281,11 +281,11 @@ Agent registration:
 ```json
 POST /agents
 {
-  "name": "braulio",
+  "name": "agent-2",
   "port": 8645,
-  "token": "braulio-token",
+  "token": "<AGENT_TOKEN>",
   "skills": ["go", "testing", "devops"],
-  "webhook_url": "http://localhost:8645/webhooks/amanda",
+  "webhook_url": "http://localhost:8645/webhooks/orchestrator",
   "webhook_secret": "<WEBHOOK_SECRET>"
 }
 ```

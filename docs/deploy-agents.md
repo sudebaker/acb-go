@@ -8,9 +8,9 @@ Guía completa para poner en marcha los agentes Hermes con integración ACB (Age
 
 ```
 ┌─────────────┐     REST API      ┌─────────┐
-│   Amanda    │ ──────────────────→│   ACB   │
+│ Orchestrator│ ──────────────────→│   ACB   │
 │ (Orquestador│     localhost:8090  │  (Go)   │
-│   Delta)    │ ←──── state ──────│         │
+│             │ ←──── state ──────│         │
 └──────┬──────┘     watcher        └────┬────┘
        │                                │
        │  Dispatch por webhook          │ Cada agente hace
@@ -19,11 +19,11 @@ Guía completa para poner en marcha los agentes Hermes con integración ACB (Age
   ┌────┴──────┬──────────┬──────────┐
   │           │          │          │
   ▼           ▼          ▼          ▼
-Quique      Braulio   Armando
-(:8647)     (:8645)    (:8646)
+Agent-1     Agent-2   Agent-3
+(coding)    (infra)    (osint)
 
 acb-state-watcher (cada 15min, no_agent)
-  → Notifica a Jesús solo cambios reales (nueva/completada/fallida/blocked)
+  → Notifica al operador solo cambios reales (nueva/completada/fallida/blocked)
 ```
 
 Cada agente es un contenedor Docker corriendo Hermes Agent con:
@@ -55,7 +55,7 @@ docker compose up -d --build
 Variables clave del `.env`:
 
 | Variable | Default | Descripción |
-|----------|---------|-------------|
+|----------|---------|------------|
 | `ACB_PORT` | `8090` | Puerto HTTP del ACB |
 | `ACB_DB_PATH` | `/var/lib/acb/acb.db` | Path de la base de datos SQLite |
 | `ACB_REDIS_ADDR` | `localhost:6379` | Dirección de Redis |
@@ -75,15 +75,15 @@ Cada agente necesita un token Bearer y sus skills registrados en la BD:
 -- Conectarse a la BD del ACB
 sqlite3 /var/lib/acb/acb.db
 
--- Registrar cada agente
+-- Registrar cada agente (nombres genéricos)
 INSERT INTO agents (name, port, token, skills, webhook_url)
-VALUES ('quique', 8647, '<token-quiue>', '["coding","security","go","testing","devops","python"]', 'http://localhost:8647/webhook/amanda');
+VALUES ('agent-1', 8647, '<AGENT_1_TOKEN>', '["coding","security","go","testing","devops","python"]', 'http://localhost:8647/webhook/orchestrator');
 
 INSERT INTO agents (name, port, token, skills, webhook_url)
-VALUES ('braulio', 8645, '<token-braulio>', '["sysadmin","coding","docker","linux","review","security","infra","go"]', 'http://localhost:8645/webhook/amanda');
+VALUES ('agent-2', 8645, '<AGENT_2_TOKEN>', '["sysadmin","coding","docker","linux","review","security","infra","go"]', 'http://localhost:8645/webhook/orchestrator');
 
 INSERT INTO agents (name, port, token, skills, webhook_url)
-VALUES ('armando', 8646, '<token-armando>', '["osint","hacking","security","research","celery"]', 'http://localhost:8646/webhook/amanda');
+VALUES ('agent-3', 8646, '<AGENT_3_TOKEN>', '["osint","hacking","security","research","celery"]', 'http://localhost:8646/webhook/orchestrator');
 ```
 
 > Los tokens deben coincidir exactamente con lo que usa cada agente en `acb-task-checker.py`.
@@ -95,7 +95,7 @@ VALUES ('armando', 8646, '<token-armando>', '["osint","hacking","security","rese
 ### Estructura de directorios
 
 ```
-~/src/{agent}-agent/
+~/src/{agent}/
 ├── docker-compose.yml
 ├── Dockerfile
 ├── .env                    # API keys, modelos
@@ -111,15 +111,15 @@ VALUES ('armando', 8646, '<token-armando>', '["osint","hacking","security","rese
 │   └── acb-task-checker.py  # Script de polling ACB
 ```
 
-### docker-compose.yml (ejemplo: Quique)
+### docker-compose.yml (ejemplo: Agent-1)
 
 ```yaml
 services:
-  quique:
+  agent-1:
     build:
       context: .
       dockerfile: Dockerfile
-    container_name: quique-agent
+    container_name: agent-1
     restart: unless-stopped
     env_file:
       - .env
@@ -152,8 +152,8 @@ El script `acb-task-checker.py` se copia dentro del contenedor en `/opt/data/scr
 
 ```bash
 # Desde el host, copiar el script
-mkdir -p ~/src/{agent}-agent/data/scripts/
-cp scripts/acb-task-checker.py ~/src/{agent}-agent/data/scripts/acb-task-checker.py
+mkdir -p ~/src/{agent}/data/scripts/
+cp scripts/acb-task-checker.py ~/src/{agent}/data/scripts/acb-task-checker.py
 ```
 
 O mediante Docker:
@@ -168,8 +168,8 @@ El script consulta el ACB por tareas asignadas al agente y las muestra en format
 ### Uso
 
 ```bash
-python3 /opt/data/acb-task-checker.py <agent_name>
-# Ejemplo: python3 /opt/data/acb-task-checker.py quique
+python3 /opt/data/scripts/acb-task-checker.py <agent_name>
+# Ejemplo: python3 /opt/data/scripts/acb-task-checker.py agent-1
 ```
 
 ---
@@ -207,7 +207,7 @@ Añadir a `/opt/data/cron/jobs.json`:
   "origin": {
     "platform": "telegram",
     "chat_id": "<CHAT_ID>",
-    "chat_name": "Jesús Cifuentes",
+    "chat_name": "",
     "thread_id": null
   }
 }
@@ -237,7 +237,7 @@ Para automatizar el setup de un nuevo agente, usar `provision-agent.sh`:
 ```bash
 #!/bin/bash
 # provision-agent.sh <agent_name> <chat_id>
-# Ejemplo: ./provision-agent.sh quique 5874591
+# Ejemplo: ./provision-agent.sh agent-1 <CHAT_ID>
 
 AGENT_NAME="$1"
 CHAT_ID="$2"
@@ -292,11 +292,11 @@ echo "✅ Agente ${AGENT_NAME} provisionado con ACB checker cada 15min"
 
 ## 7. Flujo de Trabajo
 
-### Crear una tarea (Amanda/orquestador)
+### Crear una tarea (orquestador)
 
 ```bash
 curl -X POST http://localhost:8090/tasks \
-  -H "Authorization: Bearer <token-amanda>" \
+  -H "Authorization: Bearer <ACB_ADMIN_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Implementar endpoint POST /upload",
@@ -312,21 +312,21 @@ curl -X POST http://localhost:8090/tasks \
 
 ```bash
 curl -X POST http://localhost:8090/tasks/{task_id}/claim \
-  -H "Authorization: Bearer <token-agente>"
+  -H "Authorization: Bearer <AGENT_TOKEN>"
 ```
 
 ### El agente marca como completada
 
 ```bash
 curl -X POST http://localhost:8090/tasks/{task_id}/complete \
-  -H "Authorization: Bearer <token-agente>" \
+  -H "Authorization: Bearer <AGENT_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"summary": "Endpoint implementado y testeado"}'
 ```
 
 ### Ciclo automático
 
-1. **Amanda crea tarea** → ACB guarda tarea +	dispatcha webhook al agente
+1. **Orchestrator crea tarea** → ACB guarda tarea y dispatcha webhook al agente
 2. **Cada 15 minutos** → El cronjob del agente ejecuta `acb-task-checker.py`
 3. **Si hay tareas** → El agente lee el output y empieza a trabajar
 4. **El agente actualiza estados** → `claim` → `start` → `complete`/`fail`
@@ -371,11 +371,11 @@ En red interna, poner `ACB_ALLOW_HTTP_WEBHOOKS=1` en el `.env` del ACB.
 
 | Agente | Puerto Gateway | Token ACB |
 |--------|---------------|-----------|
-| Quique | 8647 | `<ACB_AGENT_QUIQUE_TOKEN>` |
-| Braulio | 8645 | `<ACB_AGENT_BRAULIO_TOKEN>` |
-| Armando | 8646 | `<ACB_AGENT_ARMANDO_TOKEN>` |
+| Agent-1 (coding) | 8647 | `<ACB_AGENT_1_TOKEN>` |
+| Agent-2 (infra) | 8645 | `<ACB_AGENT_2_TOKEN>` |
+| Agent-3 (osint) | 8646 | `<ACB_AGENT_3_TOKEN>` |
 
-Amanda usa `ACB_ADMIN_TOKEN` para crear tareas y consultar estado (no es agente registrado, es orquestador).
+El orquestador usa `ACB_ADMIN_TOKEN` para crear tareas y consultar estado (no es agente registrado).
 
 Todos usan `network_mode: host` → comparten `localhost`.
 
@@ -389,15 +389,15 @@ El ecosistema ACB tiene dos componentes de automatización:
 
 | Script | Función | Dónde corre | Método |
 |--------|---------|-------------|--------|
-| `acb-state-watcher.py` | Notifica a Jesús (vía Telegram) solo cuando hay cambios reales en tareas (nueva, completada, fallida, blocked) | Host (Amanda) | `no_agent`, script-only |
+| `acb-state-watcher.py` | Notifica al operador (vía Telegram) solo cuando hay cambios reales en tareas (nueva, completada, fallida, blocked) | Host (orchestrator) | `no_agent`, script-only |
 | `acb-task-checker.py` | Checker pasivo — cada agente consulta sus tareas asignadas | Dentro de cada contenedor de agente | LLM-driven |
 
 ### Flujo de automatización
 
 ```
-Amanda crea tarea → ACB guarda y dispatcha webhook al agente con skills match
+Orchestrator crea tarea → ACB guarda y dispatcha webhook al agente con skills match
                                               │
-                                              ├── Canal 1: Webhook (from-amanda)
+                                              ├── Canal 1: Webhook (from-orchestrator)
                                               │   Agente Hermes recibe notificación y procesa
                                               │
                                               └── Canal 2: Polling cada 15min
@@ -405,25 +405,25 @@ Amanda crea tarea → ACB guarda y dispatcha webhook al agente con skills match
 
 Agente: claim → start → work → complete/fail
                                     │
-                         acb-state-watcher detecta cambio → Notifica a Jesús por Telegram
+                         acb-state-watcher detecta cambio → Notifica al operador por Telegram
 ```
 
-> **Diseño:** ACB hace dispatch por webhook cuando se crea una tarea. Los agentes tienen **dos canales** para recibirla: webhook directo y polling cada 15min como fallback. Amanda solo recibe notificaciones cuando algo cambia (no spam).
+> **Diseño:** ACB hace dispatch por webhook cuando se crea una tarea. Los agentes tienen **dos canales** para recibirla: webhook directo y polling cada 15min como fallback. El orquestador solo recibe notificaciones cuando algo cambia (no spam).
 
 ### Tokens de autenticación
 
 Todos los scripts usan variables de entorno para los tokens (ver `.env.example`):
 
-| Agente | Variable de entorno | Descripción |
-|--------|---------------------|-------------|
-| Amanda | `ACB_ADMIN_TOKEN` | Token maestro (admin) |
-| Braulio | `ACB_AGENT_BRAULIO_TOKEN` | Token de agente |
-| Armando | `ACB_AGENT_ARMANDO_TOKEN` | Token de agente |
-| Quique | `ACB_AGENT_QUIQUE_TOKEN` | Token de agente |
+| Rol | Variable de entorno | Descripción |
+|-----|---------------------|-------------|
+| Orchestrator | `ACB_ADMIN_TOKEN` | Token maestro (admin) |
+| Agent-2 (infra) | `ACB_AGENT_2_TOKEN` | Token de agente |
+| Agent-3 (osint) | `ACB_AGENT_3_TOKEN` | Token de agente |
+| Agent-1 (coding) | `ACB_AGENT_1_TOKEN` | Token de agente |
 
 > ⚠️ Todos los tokens se configuran mediante variables de entorno (ver `.env.example`). No hay tokens hardcodeados en los scripts.
 
-### Script de Amanda (host)
+### Script del orquestador (host)
 
 `acb-state-watcher.py` corre en el host como cronjob de Hermes (`no_agent=true`). Compara el estado actual del ACB con el estado anterior (`/tmp/acb-watcher-state.json`) y solo genera output cuando hay cambios — sin cambios, es silencioso (no notifica). Se encuentra en `~/.hermes/scripts/`.
 
@@ -450,6 +450,7 @@ acb-go/
 ```
 
 > **Nota:** Los scripts `acb-status-monitor.py`, `acb-poll-and-notify.py` y `acb-notify-agents.sh` fueron eliminados en mayo 2026. Sus funciones están consolidadas en `acb-state-watcher.py`.
+
 ## Notas
 
 - El buzón de intercambio (`~/buzon_intercambio/`) está marcado como **FUTURE DEPRECATED**. Las comunicaciones entre agentes deben ir por ACB.
