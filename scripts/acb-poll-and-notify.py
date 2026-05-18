@@ -5,35 +5,53 @@ Checks for pending/unclaimed tasks matching each agent's skills,
 then claims them and sends a notification via the agent's webhook.
 
 Usage: python3 acb-poll-and-notify.py [--agent quique|braulio|armando|all]
+
+Configuration: Set ACB_URL and agent credentials via environment variables
+or place an .env file next to this script. See .env.example for reference.
 Runs independently — no LLM tokens needed.
 """
 
 import json
+import os
 import sys
 import urllib.request
 import urllib.error
 
-ACB_URL = "http://localhost:8090"
-AGENTS = {
-    "quique": {
-        "token": "ACB_AGENT_QUIQUE_TOKEN",
-        "skills": ["coding", "security", "go", "testing", "devops", "python"],
-        "webhook": "http://localhost:8647/webhook/amanda",
-        "webhook_secret": "<WEBHOOK_SECRET>",
-    },
-    "braulio": {
-        "token": "ACB_AGENT_BRAULIO_TOKEN",
-        "skills": ["sysadmin", "coding", "docker", "linux", "review", "security", "infra", "go"],
-        "webhook": "http://localhost:8645/webhook/amanda",
-        "webhook_secret": "<WEBHOOK_SECRET>",
-    },
-    "armando": {
-        "token": "ACB_AGENT_ARMANDO_TOKEN",
-        "skills": ["osint", "hacking", "security", "research", "celery"],
-        "webhook": "http://localhost:8646/webhook/amanda",
-        "webhook_secret": "<WEBHOOK_SECRET>",
-    },
-}
+ACB_URL = os.environ.get("ACB_URL", "http://localhost:8090")
+
+
+def load_agents():
+    """Load agent config from environment variables.
+
+    Expected env vars per agent:
+      ACB_AGENT_QUIQUE_TOKEN, ACB_AGENT_QUIQUE_WEBHOOK, ACB_AGENT_QUIQUE_WEBHOOK_SECRET
+      ACB_AGENT_BRAULIO_TOKEN, ACB_AGENT_BRAULIO_WEBHOOK, ACB_AGENT_BRAULIO_WEBHOOK_SECRET
+      ACB_AGENT_ARMANDO_TOKEN, ACB_AGENT_ARMANDO_WEBHOOK, ACB_AGENT_ARMANDO_WEBHOOK_SECRET
+
+    Skills are hardcoded as they define the agent's capabilities, not secrets.
+    """
+    agents = {}
+    for name, skills in [
+        ("quique", ["coding", "security", "go", "testing", "devops", "python"]),
+        ("braulio", ["sysadmin", "coding", "docker", "linux", "review", "security", "infra", "go"]),
+        ("armando", ["osint", "hacking", "security", "research", "celery"]),
+    ]:
+        token = os.environ.get(f"ACB_AGENT_{name.upper()}_TOKEN")
+        webhook = os.environ.get(f"ACB_AGENT_{name.upper()}_WEBHOOK", f"http://localhost:864{7 if name=='quique' else 5 if name=='braulio' else 6}/webhook/amanda")
+        webhook_secret = os.environ.get(f"ACB_AGENT_{name.upper()}_WEBHOOK_SECRET", "")
+        if not token:
+            print(f"[WARN] ACB_AGENT_{name.upper()}_TOKEN not set, skipping {name}")
+            continue
+        agents[name] = {
+            "token": token,
+            "skills": skills,
+            "webhook": webhook,
+            "webhook_secret": webhook_secret,
+        }
+    return agents
+
+
+AGENTS = load_agents()
 
 
 def api(method, path, token, data=None):

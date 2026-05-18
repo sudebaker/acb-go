@@ -603,7 +603,7 @@ curl -s "http://localhost:8090/tasks?status=pending" \
 curl -s -X POST http://localhost:8090/agents \
   -H "Authorization: Bearer braulio-token" \
   -H "Content-Type: application/json" \
-  -d '{"name":"braulio","port":8645,"token":"braulio-token","skills":["go","testing"],"webhook_url":"http://localhost:8645/webhooks/amanda","webhook_secret":"<WEBHOOK_SECRET>"}'
+  -d '{"name":"braulio","port":8645,"token":"<AGENT_TOKEN>","skills":["go","testing"],"webhook_url":"http://localhost:8645/webhooks/amanda","webhook_secret":"<WEBHOOK_SECRET>"}'
 
 # Get next matching task for polling
 curl -s "http://localhost:8090/tasks/dispatch?agent=braulio" \

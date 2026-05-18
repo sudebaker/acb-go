@@ -370,14 +370,14 @@ En red interna, poner `ACB_ALLOW_HTTP_WEBHOOKS=1` en el `.env` del ACB.
 
 | Agente | Puerto Gateway | Token ACB |
 |--------|---------------|-----------|
-| Quique | 8647 | `ACB_AGENT_QUIQUE_TOKEN` |
-| Braulio | 8645 | `ACB_AGENT_BRAULIO_TOKEN` |
-| Armando | 8646 | `ACB_AGENT_ARMANDO_TOKEN` |
-| Amanda | 8648 | `ACB_ADMIN_TOKEN` (token maestro) |
+| Quique | 8647 | `<ACB_AGENT_QUIQUE_TOKEN>` |
+| Braulio | 8645 | `<ACB_AGENT_BRAULIO_TOKEN>` |
+| Armando | 8646 | `<ACB_AGENT_ARMANDO_TOKEN>` |
+| Amanda | 8648 | `<ACB_ADMIN_TOKEN>` (token maestro) |
 
 Todos usan `network_mode: host` → comparten `localhost`.
 
-> Los tokens fueron actualizados tras el bugfix del commit `052bc7e` (prefijo determinista SHA-256 en vez de salt aleatorio de Argon2id).
+> Los tokens se generan mediante el script `scripts/gen-env.sh` o la API admin del ACB.
 
 ---
 
@@ -406,16 +406,16 @@ Dentro de cada agente:
 
 ### Tokens de autenticación
 
-Todos los scripts usan los tokens post-bugfix (commit `052bc7e`):
+Todos los scripts usan variables de entorno para los tokens (ver `.env.example`):
 
-| Agente | Variable de entorno | Token |
-|--------|---------------------|-------|
-| Amanda | `ACB_TOKEN_AMANDA` | `ACB_ADMIN_TOKEN` |
-| Braulio | `ACB_TOKEN_BRAULIO` | `ACB_AGENT_BRAULIO_TOKEN` |
-| Armando | `ACB_TOKEN_ARMANDO` | `ACB_AGENT_ARMANDO_TOKEN` |
-| Quique | `ACB_TOKEN_QUIQUE` | `ACB_AGENT_QUIQUE_TOKEN` |
+| Agente | Variable de entorno | Descripción |
+|--------|---------------------|-------------|
+| Amanda | `ACB_ADMIN_TOKEN` | Token maestro (admin) |
+| Braulio | `ACB_AGENT_BRAULIO_TOKEN` | Token de agente |
+| Armando | `ACB_AGENT_ARMANDO_TOKEN` | Token de agente |
+| Quique | `ACB_AGENT_QUIQUE_TOKEN` | Token de agente |
 
-> ⚠️ `acb-poll-and-notify.py` y `acb-notify-agents.sh` tienen los tokens embebidos directamente (corren como `no_agent` sin acceso a `.env`). `acb-task-checker.py` los lee de variables de entorno `ACB_TOKEN_<NAME>`.
+> ⚠️ Todos los tokens se configuran mediante variables de entorno (ver `.env.example`). No hay tokens hardcodeados en los scripts.
 
 ### Scripts de Amanda (host)
 

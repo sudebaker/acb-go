@@ -1,9 +1,12 @@
 #!/bin/bash
 # ACB Task Notifier — checks tasks for all agents and sends notifications via webhook
 # Runs as system cron every 15 minutes. Only sends if there are pending/claimed tasks.
+#
+# Configuration: Set environment variables (or use .env file):
+#   ACB_URL, ACB_AGENT_QUIQUE_TOKEN, ACB_AGENT_BRAULIO_TOKEN, ACB_AGENT_ARMANDO_TOKEN
+#   ACB_AGENT_QUIQUE_WEBHOOK_SECRET, etc.  See .env.example for reference.
 
-ACB_URL="http://localhost:8090"
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ACB_URL="${ACB_URL:-http://localhost:8090}"
 STATE_DIR="/tmp/acb-agent-notify"
 
 mkdir -p "$STATE_DIR"
@@ -13,6 +16,11 @@ notify_agent() {
     local webhook_url="$2"
     local webhook_secret="$3"
     local token="$4"
+
+    if [ -z "$token" ]; then
+        echo "[$agent_name] SKIP: no token configured"
+        return 0
+    fi
     
     # Fetch tasks for this agent
     local tasks=$(curl -sf "$ACB_URL/tasks" -H "Authorization: Bearer $token" | \
@@ -53,8 +61,8 @@ msg = '''Tienes tareas pendientes en el ACB:
 
 $tasks
 
-Empieza a trabajar: curl -X POST $ACB_URL/tasks/ID/start -H 'Authorization: Bearer $token'
-Cuando termines: curl -X POST $ACB_URL/tasks/ID/complete -H 'Authorization: Bearer $token' -H 'Content-Type: application/json' -d '{\"summary\":\"lo que hiciste\"}'
+Empieza a trabajar: curl -X POST $ACB_URL/tasks/ID/start -H 'Authorization: Bearer <token>'
+Cuando termines: curl -X POST $ACB_URL/tasks/ID/complete -H 'Authorization: Bearer <token>' -H 'Content-Type: application/json' -d '{\"summary\":\"lo que hiciste\"}'
 '''
 print(json.dumps({'message': msg}))
 ")
@@ -67,6 +75,6 @@ print(json.dumps({'message': msg}))
     echo "[$agent_name] Notified: tasks changed"
 }
 
-notify_agent "quique" "http://localhost:8647/webhook/amanda" "<WEBHOOK_SECRET>" "ACB_AGENT_QUIQUE_TOKEN"
-notify_agent "braulio" "http://localhost:8645/webhook/amanda" "<WEBHOOK_SECRET>" "ACB_AGENT_BRAULIO_TOKEN"
-notify_agent "armando" "http://localhost:8646/webhook/amanda" "<WEBHOOK_SECRET>" "ACB_AGENT_ARMANDO_TOKEN"
+notify_agent "quique" "http://localhost:8647/webhook/amanda" "${ACB_AGENT_QUIQUE_WEBHOOK_SECRET}" "${ACB_AGENT_QUIQUE_TOKEN}"
+notify_agent "braulio" "http://localhost:8645/webhook/amanda" "${ACB_AGENT_BRAULIO_WEBHOOK_SECRET}" "${ACB_AGENT_BRAULIO_TOKEN}"
+notify_agent "armando" "http://localhost:8646/webhook/amanda" "${ACB_AGENT_ARMANDO_WEBHOOK_SECRET}" "${ACB_AGENT_ARMANDO_TOKEN}"
