@@ -370,25 +370,75 @@ En red interna, poner `ACB_ALLOW_HTTP_WEBHOOKS=1` en el `.env` del ACB.
 
 | Agente | Puerto Gateway | Token ACB |
 |--------|---------------|-----------|
-| Quique | 8647 | Configurado en `acb-task-checker.py` |
-| Braulio | 8645 | Configurado en `acb-task-checker.py` |
-| Armando | 8646 | Configurado en `acb-task-checker.py` |
-| Amanda | 8648 | Token maestro |
+| Quique | 8647 | `ACB_AGENT_QUIQUE_TOKEN` |
+| Braulio | 8645 | `ACB_AGENT_BRAULIO_TOKEN` |
+| Armando | 8646 | `ACB_AGENT_ARMANDO_TOKEN` |
+| Amanda | 8648 | `ACB_ADMIN_TOKEN` (token maestro) |
 
 Todos usan `network_mode: host` → comparten `localhost`.
 
+> Los tokens fueron actualizados tras el bugfix del commit `052bc7e` (prefijo determinista SHA-256 en vez de salt aleatorio de Argon2id).
+
 ---
 
-## 10. Ficheros Clave del Repo
+## 10. Scripts de Automatización
+
+El ecosistema ACB tiene cuatro scripts complementarios que corren como cronjobs de Amanda (Hermes orquestador):
+
+| Script | Función | Cronjob | Método |
+|--------|---------|---------|--------|
+| `acb-status-monitor.py` | Monitor general del ACB — notifica cambios de estado de tareas | `acb-monitor` (cada 15min) | `no_agent`, script-only |
+| `acb-poll-and-notify.py` | Polling proactivo — reclama tareas pendientes por skill match y notifica al agente vía webhook | `acb-poll-and-notify` (cada 15min) | `no_agent`, script-only |
+| `acb-notify-agents.sh` | Notifica a cada agente cuando cambian sus tareas (filtro por assignee), evita spam con hash de estado | `acb-notify-agents` (cada 15min) | `no_agent`, script-only |
+| `acb-task-checker.py` | Checker pasivo — cada agente consulta sus tareas asignadas (corre dentro del contenedor del agente) | Dentro de cada contenedor de agente | LLM-driven |
+
+### Flujo de automatización
+
+```
+Cada 15 minutos:
+  1. acb-poll-and-notify.py → busca tareas pending, las reclama por skill match, notifica vía webhook
+  2. acb-notify-agents.sh  → si las tareas de un agente cambiaron desde la última notificación, envía webhook
+  3. acb-status-monitor.py  → si cambió el estado general del ACB, notifica a Jesús via Telegram
+
+Dentro de cada agente:
+  acb-task-checker.py → consulta tareas del agente, salida legible para que el LLM empiece a trabajar
+```
+
+### Tokens de autenticación
+
+Todos los scripts usan los tokens post-bugfix (commit `052bc7e`):
+
+| Agente | Variable de entorno | Token |
+|--------|---------------------|-------|
+| Amanda | `ACB_TOKEN_AMANDA` | `ACB_ADMIN_TOKEN` |
+| Braulio | `ACB_TOKEN_BRAULIO` | `ACB_AGENT_BRAULIO_TOKEN` |
+| Armando | `ACB_TOKEN_ARMANDO` | `ACB_AGENT_ARMANDO_TOKEN` |
+| Quique | `ACB_TOKEN_QUIQUE` | `ACB_AGENT_QUIQUE_TOKEN` |
+
+> ⚠️ `acb-poll-and-notify.py` y `acb-notify-agents.sh` tienen los tokens embebidos directamente (corren como `no_agent` sin acceso a `.env`). `acb-task-checker.py` los lee de variables de entorno `ACB_TOKEN_<NAME>`.
+
+### Scripts de Amanda (host)
+
+Los scripts `acb-poll-and-notify.py`, `acb-notify-agents.sh` y `acb-status-monitor.py` corren en el host como cronjobs de Hermes (`no_agent=true`). Se encuentran en `~/.hermes/scripts/` y también se copian al repo `acb-go/scripts/` para versionado.
+
+---
+
+## 11. Ficheros Clave del Repo
 
 ```
 acb-go/
 ├── scripts/
-│   └── acb-task-checker.py    # Script de polling para agentes
+│   ├── acb-status-monitor.py   # Monitor general del ACB
+│   ├── acb-poll-and-notify.py  # Polling proactivo — reclama y notifica
+│   ├── acb-notify-agents.sh    # Notificaciones por change-detection por agente
+│   ├── acb-task-checker.py     # Checker pasivo para agentes
+│   ├── gen-env.sh              # Generador de .env
+│   ├── provision-agent.sh      # Provisionamiento de nuevos agentes
+│   └── test.sh                 # Tests E2E
 ├── docs/
 │   ├── deploy-agents.md       # Esta guía
 │   ├── api-reference.md       # Referencia API del ACB
-│   ├── agent-integration.md   # Guía de integración de agentes
+│   ├── agent-integration.md  # Guía de integración de agentes
 │   └── dispatcher-architecture.md
 ├── docker-compose.yml
 ├── .env.example

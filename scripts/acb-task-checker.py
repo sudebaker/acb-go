@@ -9,7 +9,7 @@ Usage: python3 acb-task-checker.py <agent_name>
 
 Silent if no tasks. Outputs actionable info if there are tasks.
 
-Environment variables (optional, override defaults):
+Environment variables (override defaults):
   ACB_URL    - ACB base URL (default: http://localhost:8090)
   ACB_TOKEN_<AGENT> - Token for agent, e.g. ACB_TOKEN_QUIQUE
 """
@@ -22,34 +22,40 @@ import urllib.error
 
 ACB_URL = os.environ.get("ACB_URL", "http://localhost:8090")
 
-# Default tokens — can be overridden via env vars ACB_TOKEN_<NAME>
-DEFAULT_TOKENS = {
-    "quique": os.environ.get("ACB_TOKEN_QUIQUE", "9IDxRfayMpbAvHRK1DU+nYv4VaMYxEkD0R0xlLfoW/SClYVpPCYvRHxDwbwarm5c"),
-    "braulio": os.environ.get("ACB_TOKEN_BRAULIO", "braulio-token"),
-    "armando": os.environ.get("ACB_TOKEN_ARMANDO", "armando-token"),
-    "amanda": os.environ.get("ACB_TOKEN_AMANDA", "9IDxRfayMpbAvHRK1DU+nYv4VaMYxEkD0R0xlLfoW/SClYVpPCYvRHxDwbwarm5c"),
-}
+
+def get_agent_token(agent_name):
+    """Get agent token from environment variable ACB_TOKEN_<NAME>."""
+    env_key = f"ACB_TOKEN_{agent_name.upper()}"
+    token = os.environ.get(env_key)
+    if token:
+        return token
+
+    # Fallback: read from the ACB .env file using admin token
+    # (only for Amanda's monitoring use)
+    return None
 
 
-def check_tasks(agent_name):
-    token = DEFAULT_TOKENS.get(agent_name) or os.environ.get(f"ACB_TOKEN_{agent_name.upper()}")
+def check_tasks(agent_name, token=None):
     if not token:
-        print(f"Agente desconocido: {agent_name}")
-        print(f"Agentes disponibles: {', '.join(DEFAULT_TOKENS.keys())}")
-        print(f"O define la variable ACB_TOKEN_{agent_name.upper()}")
+        token = get_agent_token(agent_name)
+    if not token:
+        # Silent — no token configured
         return
 
     url = f"{ACB_URL}/tasks"
-    req = urllib.request.Request(url, headers={"Authorization": f"Bearer {token}"})
+    req = urllib.request.Request(url, headers={
+        "Authorization": f"Bearer {token}",
+        "X-Agent-Name": agent_name,
+    })
 
     try:
         with urllib.request.urlopen(req, timeout=10) as resp:
             tasks = json.loads(resp.read().decode())
     except urllib.error.HTTPError as e:
-        print(f"Error HTTP consultando ACB: {e.code} {e.reason}")
-        return
-    except urllib.error.URLError as e:
-        print(f"Error conectando a ACB ({ACB_URL}): {e.reason}")
+        if e.code == 401:
+            print(f"⚠️ ACB auth error for {agent_name}: token invalid or expired")
+        else:
+            print(f"Error HTTP consultando ACB: {e.code} {e.reason}")
         return
     except Exception as e:
         print(f"Error consultando ACB: {e}")
@@ -83,8 +89,8 @@ def check_tasks(agent_name):
 
 
 if __name__ == "__main__":
-    if len(sys.argv) != 2:
+    if len(sys.argv) < 2:
         print(f"Uso: {sys.argv[0]} <agent_name>")
-        print(f"Agentes disponibles: {', '.join(DEFAULT_TOKENS.keys())}")
+        print("Define ACB_TOKEN_<AGENT> en el entorno del agente")
         sys.exit(1)
     check_tasks(sys.argv[1])
