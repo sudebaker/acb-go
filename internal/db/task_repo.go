@@ -315,6 +315,49 @@ func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
 	return r.GetByID(id)
 }
 
+// ExpirePendingTasks cancels tasks that have been in 'pending' status for longer
+// than timeoutMinutes and returns the IDs of expired tasks for logging.
+func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
+	rows, err := r.db.Query(
+		`SELECT id, title FROM tasks
+		 WHERE status = 'pending'
+		 AND created_at < datetime('now', '-' || ? || ' minutes')`,
+		timeoutMinutes,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query pending expired tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var expiredIDs []string
+	for rows.Next() {
+		var id, title string
+		if err := rows.Scan(&id, &title); err != nil {
+			log.Printf("[WARN] ExpirePendingTasks: scan error: %v", err)
+			continue
+		}
+		expiredIDs = append(expiredIDs, id)
+	}
+
+	if len(expiredIDs) == 0 {
+		return nil, nil
+	}
+
+	for _, id := range expiredIDs {
+		_, err := r.db.Exec(
+			`UPDATE tasks SET status = 'failed', summary = 'Task expired: no agent claimed within timeout period', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
+			id,
+		)
+		if err != nil {
+			log.Printf("[ERROR] ExpirePendingTasks: failed to expire task %s: %v", id, err)
+			continue
+		}
+		r.logTaskEvent(id, "PendingTimeout", "", fmt.Sprintf("Task expired after %d minutes in pending status", timeoutMinutes))
+	}
+
+	return expiredIDs, nil
+}
+
 func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
 	var raw string
 	err := r.db.QueryRow("SELECT artifacts_json FROM tasks WHERE id = ?", id).Scan(&raw)

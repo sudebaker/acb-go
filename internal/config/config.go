@@ -6,18 +6,20 @@ import (
 )
 
 type Config struct {
-	Port               int
-	DBPath             string
-	RedisAddr          string
-	RedisPass          string
-	RustFSEndpoint     string
-	RustFSBucket       string
-	RustFSRegion       string
-	RustFSAccessKey    string
-	RustFSSecretKey    string
-	LogLevel           string
-	ArtifactTTLDays    int
-	MaxUploadSizeMB    int
+	Port                   int
+	DBPath                 string
+	RedisAddr              string
+	RedisPass              string
+	RustFSEndpoint         string
+	RustFSBucket           string
+	RustFSRegion           string
+	RustFSAccessKey        string
+	RustFSSecretKey        string
+	LogLevel               string
+	ArtifactTTLDays        int
+	MaxUploadSizeMB        int
+	PendingTimeoutMin      int
+	PendingTimeoutCheckSec int
 }
 
 func Load() *Config {
@@ -34,6 +36,8 @@ func Load() *Config {
 		LogLevel:           getEnv("ACB_LOG_LEVEL", "info"),
 		ArtifactTTLDays:    getEnvInt("ACB_ARTIFACT_TTL_DAYS", 30),
 		MaxUploadSizeMB:    getEnvInt("ACB_MAX_UPLOAD_SIZE_MB", 32),
+		PendingTimeoutMin:      getEnvInt("ACB_PENDING_TIMEOUT_MIN", 15),
+		PendingTimeoutCheckSec: getEnvInt("ACB_PENDING_TIMEOUT_CHECK_SEC", 60),
 	}
 }
 

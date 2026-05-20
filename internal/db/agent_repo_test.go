@@ -45,9 +45,9 @@ func TestGetByToken(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_123"})
+	repo.UpsertAgent(&models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_12345"})
 
-	got, err := repo.GetByToken("tok_123")
+	got, err := repo.GetByToken("tok_12345")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,9 +166,9 @@ func TestGetByTokenWithSkills(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "agent-js", Port: 8081, Token: "tok_js", Skills: []string{"javascript", "node"}})
+	repo.UpsertAgent(&models.Agent{Name: "agent-js", Port: 8081, Token: "tok_js_abc", Skills: []string{"javascript", "node"}})
 
-	got, err := repo.GetByToken("tok_js")
+	got, err := repo.GetByToken("tok_js_abc")
 	if err != nil {
 		t.Fatal(err)
 	}
