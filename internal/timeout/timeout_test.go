@@ -79,10 +79,15 @@ func TestPendingTimeoutService_RunsCheck(t *testing.T) {
 	svc.Start()
 	defer svc.Stop()
 
-	// Wait for a check cycle
-	time.Sleep(1 * time.Second)
-
-	got, _ := repo.GetByID("timeout-test-1")
+	// Poll for the task to be expired — check every 50ms for up to 3 seconds
+	var got *models.Task
+	for i := 0; i < 60; i++ {
+		time.Sleep(50 * time.Millisecond)
+		got, _ = repo.GetByID("timeout-test-1")
+		if got.Status == "failed" {
+			break
+		}
+	}
 	if got.Status != "failed" {
 		t.Errorf("expected task to be expired (failed), got status=%s", got.Status)
 	}

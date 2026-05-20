@@ -106,3 +106,29 @@ func (c *Config) ValidateSkills(skills []string) []string {
 	}
 	return invalid
 }
+
+// IsValidTag checks if a tag is in the allowed list.
+// If the allowed list is empty (not configured), all tags are valid.
+// Nil receiver is treated as "no restrictions" — all tags are valid.
+func (c *Config) IsValidTag(tag string) bool {
+	if c == nil || len(c.AllowedTags) == 0 {
+		return true
+	}
+	for _, t := range c.AllowedTags {
+		if t == tag {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateTags returns the list of invalid tags from the input.
+func (c *Config) ValidateTags(tags []string) []string {
+	var invalid []string
+	for _, t := range tags {
+		if !c.IsValidTag(t) {
+			invalid = append(invalid, t)
+		}
+	}
+	return invalid
+}

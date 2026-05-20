@@ -55,7 +55,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	// Validate required_skills against allowed list
 	if len(input.RequiredSkills) > 0 {
 		if invalid := h.cfg.ValidateSkills(input.RequiredSkills); len(invalid) > 0 {
-			WriteError(w, 400, "invalid_required_skills", fmt.Sprintf("these skills are not allowed: %v. allowed: %v", invalid, h.cfg.AllowedSkills))
+			WriteError(w, 400, "invalid_required_skills", fmt.Sprintf("these skills are not allowed: %v", invalid))
 			return
 		}
 	}
@@ -63,7 +63,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	// Validate skills against allowed list
 	if len(input.Skills) > 0 {
 		if invalid := h.cfg.ValidateSkills(input.Skills); len(invalid) > 0 {
-			WriteError(w, 400, "invalid_skills", fmt.Sprintf("these skills are not allowed: %v. allowed: %v", invalid, h.cfg.AllowedSkills))
+			WriteError(w, 400, "invalid_skills", fmt.Sprintf("these skills are not allowed: %v", invalid))
 			return
 		}
 	}

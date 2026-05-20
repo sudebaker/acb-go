@@ -72,7 +72,7 @@ func isPrivateIP(ip net.IP) bool {
 		{IP: net.ParseIP("172.16.0.0"), Mask: net.CIDRMask(12, 32)},
 		{IP: net.ParseIP("192.168.0.0"), Mask: net.CIDRMask(16, 32)},
 		{IP: net.ParseIP("0.0.0.0"), Mask: net.CIDRMask(8, 32)},
-		{IP: net.ParseIP("100.64.0.0"), Mask: net.CIDRMask(10, 32)},
+		// Note: 100.64.0.0/10 (CGNAT/Tailscale) removed — internal agents use Tailscale
 	}
 	for _, network := range privateNetworks {
 		if network.Contains(ip) {
