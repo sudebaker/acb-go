@@ -67,7 +67,7 @@ func main() {
 	timeoutSvc.Start()
 	defer timeoutSvc.Stop()
 
-	r := api.NewRouter(taskRepo, gateRepo, agentRepo, pub, rustfsClient, disp)
+	r := api.NewRouter(taskRepo, gateRepo, agentRepo, pub, rustfsClient, disp, cfg)
 
 	addr := fmt.Sprintf(":%d", cfg.Port)
 	log.Printf("ACB listening on %s", addr)

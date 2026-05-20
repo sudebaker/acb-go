@@ -3,9 +3,11 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
+	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/dispatcher"
 	"github.com/sudebaker/acb-go/internal/models"
@@ -19,6 +21,7 @@ type TaskHandler struct {
 	agentRepo  *db.AgentRepo
 	pub        *acbredis.Publisher
 	dispatcher *dispatcher.Dispatcher
+	cfg        *config.Config
 }
 
 func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
@@ -47,6 +50,22 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.ID == "" {
 		input.ID = uuid.New().String()
+	}
+
+	// Validate required_skills against allowed list
+	if h.cfg != nil && len(input.RequiredSkills) > 0 {
+		if invalid := h.cfg.ValidateSkills(input.RequiredSkills); len(invalid) > 0 {
+			WriteError(w, 400, "invalid_required_skills", fmt.Sprintf("these skills are not allowed: %v. allowed: %v", invalid, h.cfg.AllowedSkills))
+			return
+		}
+	}
+
+	// Validate skills against allowed list
+	if h.cfg != nil && len(input.Skills) > 0 {
+		if invalid := h.cfg.ValidateSkills(input.Skills); len(invalid) > 0 {
+			WriteError(w, 400, "invalid_skills", fmt.Sprintf("these skills are not allowed: %v. allowed: %v", invalid, h.cfg.AllowedSkills))
+			return
+		}
 	}
 
 	task := &models.Task{

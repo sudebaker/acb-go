@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -20,6 +21,8 @@ type Config struct {
 	MaxUploadSizeMB        int
 	PendingTimeoutMin      int
 	PendingTimeoutCheckSec int
+	AllowedSkills          []string
+	AllowedTags            []string
 }
 
 func Load() *Config {
@@ -38,6 +41,8 @@ func Load() *Config {
 		MaxUploadSizeMB:    getEnvInt("ACB_MAX_UPLOAD_SIZE_MB", 32),
 		PendingTimeoutMin:      getEnvInt("ACB_PENDING_TIMEOUT_MIN", 15),
 		PendingTimeoutCheckSec: getEnvInt("ACB_PENDING_TIMEOUT_CHECK_SEC", 60),
+		AllowedSkills:          getEnvList("ACB_ALLOWED_SKILLS", "coding,review,testing,architecture,devops,security,infra,debugging,documentation,osint,hacking,forensics,go,python,orchestration,dispatch,management"),
+		AllowedTags:            getEnvList("ACB_ALLOWED_TAGS", ""),
 	}
 }
 
@@ -55,4 +60,48 @@ func getEnvInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func getEnvList(key, fallback string) []string {
+	v := os.Getenv(key)
+	if v == "" {
+		v = fallback
+	}
+	if v == "" {
+		return nil
+	}
+	parts := strings.Split(v, ",")
+	result := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			result = append(result, p)
+		}
+	}
+	return result
+}
+
+// IsValidSkill checks if a skill is in the allowed list.
+// If the allowed list is empty (not configured), all skills are valid.
+func (c *Config) IsValidSkill(skill string) bool {
+	if len(c.AllowedSkills) == 0 {
+		return true
+	}
+	for _, s := range c.AllowedSkills {
+		if s == skill {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateSkills returns the list of invalid skills from the input.
+func (c *Config) ValidateSkills(skills []string) []string {
+	var invalid []string
+	for _, s := range skills {
+		if !c.IsValidSkill(s) {
+			invalid = append(invalid, s)
+		}
+	}
+	return invalid
 }

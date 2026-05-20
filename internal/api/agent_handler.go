@@ -2,9 +2,11 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"github.com/sudebaker/acb-go/internal/dispatcher"
 
+	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
 	"github.com/go-chi/chi/v5"
@@ -13,6 +15,7 @@ import (
 type AgentHandler struct {
 	agentRepo *db.AgentRepo
 	limiter   *RateLimiter
+	cfg       *config.Config
 }
 
 func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
@@ -96,6 +99,14 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 	if agentNameFromAuth != "admin" && agentNameFromAuth != input.Name {
 		WriteError(w, 403, "forbidden", "agent can only register itself")
 		return
+	}
+
+	// Validate skills against allowed list
+	if h.cfg != nil && len(input.Skills) > 0 {
+		if invalid := h.cfg.ValidateSkills(input.Skills); len(invalid) > 0 {
+			WriteError(w, 400, "invalid_skills", fmt.Sprintf("these skills are not allowed: %v. allowed: %v", invalid, h.cfg.AllowedSkills))
+			return
+		}
 	}
 
 	// If token is not provided, use the Bearer token from auth
