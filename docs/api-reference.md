@@ -41,6 +41,16 @@ pending ──→ claimed ──→ in_progress ──→ completed
 
 Valid transitions are enforced server-side. Invalid transitions return `409 Conflict`.
 
+### Pending Task Timeout
+
+Unclaimed tasks in `pending` state are automatically expired after a configurable timeout. When a task exceeds the timeout, its status transitions to `failed` with reason `"expired: pending timeout"`.
+
+**Configuration:**
+- `ACB_PENDING_TIMEOUT_MIN` — timeout in minutes (default: `15`)
+- `ACB_PENDING_TIMEOUT_CHECK_SEC` — check interval in seconds (default: `60`)
+
+A background goroutine runs at the configured interval, scanning for `pending` tasks older than the timeout and transitioning them to `failed`.
+
 ---
 
 ### `POST /tasks`
@@ -48,6 +58,14 @@ Valid transitions are enforced server-side. Invalid transitions return `409 Conf
 Create a new task.
 
 **Auth:** Bearer token required
+
+**Skills validation:** If `ACB_ALLOWED_SKILLS` is configured, each skill in `required_skills` must be in the allowed list. Tasks with invalid skills receive `400`:
+
+```json
+{"error": "invalid_skills", "message": "invalid skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
+```
+
+If `ACB_ALLOWED_SKILLS` is not set (empty), all skills are accepted.
 
 **Request body:**
 ```json
@@ -297,6 +315,12 @@ Mark a task as failed with a reason. Only allowed from `in_progress`.
 Register or update an agent with webhook URL for task dispatch.
 
 **Auth:** Bearer token required. Agents can only register themselves (X-Agent-Name must match).
+
+**Skills validation:** If `ACB_ALLOWED_SKILLS` is configured, each skill in the agent's `skills` array must be in the allowed list. Registration with invalid skills receives `400`:
+
+```json
+{"error": "invalid_skills", "message": "invalid agent skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
+```
 
 **Request body:**
 ```json

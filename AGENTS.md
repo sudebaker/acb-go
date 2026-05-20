@@ -15,23 +15,27 @@ Go 1.22+, `go-sqlite3`, `chi/v5`, `go-redis/v9`, `google/uuid`, `godotenv`
 - **TDD per task**: write failing test → implement → pass → commit
 - **Single DB connection**: `SetMaxOpenConns(1)` (SQLite single-writer)
 - **Auth**: Bearer token per agent, validated against `agents` table; `/health` is public
-- **Skills**: Agents have skills set at deployment time; tasks declare `required_skills` → ACB validates on claim (403 if insufficient)
+- **Skills**: Agents have skills set at deployment time; tasks declare `required_skills` → ACB validates on claim (403 if insufficient). Skills are constrained to a fixed catalog via `ACB_ALLOWED_SKILLS` env var (comma-separated). Both task creation and agent registration reject skills not in the catalog (400).
+- **Pending timeout**: Unclaimed tasks auto-expire after `ACB_PENDING_TIMEOUT_MIN` minutes (default 15). A background goroutine checks every `ACB_PENDING_TIMEOUT_CHECK_SEC` seconds (default 60) and transitions stale `pending` tasks to `failed`.
 - **Dispatch**: Hybrid push webhook + pull polling. ACB matches agents by skills and POSTs to `webhook_url` on task creation. Failed webhooks retry via Redis list with exponential backoff. `GET /tasks/dispatch` for agents that prefer polling.
 - **SSRF protection**: Webhook URLs validated at registration — private IPs rejected, scheme enforced, DNS resolution checked.
 - **Task states**: `pending → claimed → in_progress → blocked → completed/failed`
-- **Env vars**: `ACB_PORT`, `ACB_DB_PATH`, `ACB_REDIS_ADDR`, `ACB_REDIS_PASS`, `ACB_RUSTFS_ENDPOINT`, `ACB_RUSTFS_BUCKET`, `ACB_MAX_UPLOAD_SIZE_MB`, `ACB_ARTIFACT_TTL_DAYS`, `ACB_LOG_LEVEL`
+- **Env vars**: `ACB_PORT`, `ACB_DB_PATH`, `ACB_REDIS_ADDR`, `ACB_REDIS_PASS`, `ACB_RUSTFS_ENDPOINT`, `ACB_RUSTFS_BUCKET`, `ACB_MAX_UPLOAD_SIZE_MB`, `ACB_ARTIFACT_TTL_DAYS`, `ACB_LOG_LEVEL`, `ACB_PENDING_TIMEOUT_MIN`, `ACB_PENDING_TIMEOUT_CHECK_SEC`, `ACB_ALLOWED_SKILLS`, `ACB_ALLOWED_TAGS`
 
 ## Directory structure
 ```
 main.go                  — entry point, wires DB → repos → Redis → dispatcher → router → HTTP
 internal/
-  config/                — env loader (config.Load())
+  config/                — env loader (config.Load()), skill validation helpers
   db/                    — SQLite Open/ path, RunMigrations, TaskRepo, GateRepo, AgentRepo
   api/                   — NewRouter, chi handlers, response helpers, AuthMiddleware
   dispatcher/             — webhook push dispatcher with SSRF validation + retry queue
     dispatcher.go        — Dispatcher struct, DispatchToAgents(), retry goroutine
     validator.go         — SSRF validation (private IP denylist, scheme check, DNS resolution)
     dispatcher_test.go   — unit tests for dispatch and validation
+  timeout/               — PendingTimeoutService, auto-expires unclaimed tasks
+    timeout.go           — goroutine with configurable interval and timeout
+    timeout_test.go      — unit tests for timeout service
   models/                — Task, Gate, Agent structs
   redis/                 — NewPublisher, PublishTaskEvent (fire-and-forget)
 tests/

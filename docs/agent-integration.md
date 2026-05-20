@@ -37,6 +37,16 @@ agentRepo.UpsertAgent(&models.Agent{
 
 Each agent must have a unique token. The token is used for Bearer authentication on every request. The `skills` field is configured at deployment time by the operator — the agent does not declare its own skills. The ACB validates these skills when the agent attempts to claim a task.
 
+**Skills catalog:** The ACB enforces a fixed catalog of allowed skills via the `ACB_ALLOWED_SKILLS` env var (comma-separated). At registration, skills not in the catalog are rejected with `400`:
+
+```json
+{"error": "invalid_skills", "message": "invalid agent skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
+```
+
+If `ACB_ALLOWED_SKILLS` is not configured, all skills are accepted.
+
+**Pending task timeout:** Tasks that remain in `pending` state without being claimed automatically expire after `ACB_PENDING_TIMEOUT_MIN` minutes (default: 15). The task transitions to `failed` with reason `"expired: pending timeout"`. Agents should handle this gracefully — if a dispatch/claim arrives after expiration, it will return `409`.
+
 ---
 
 ## 2. Authentication
