@@ -97,7 +97,7 @@ func setupRouterWithRustFS(t *testing.T) (*db.TaskRepo, *rustfs.Client, http.Han
 	memStore := newHandlerMemStore()
 	rustfsClient := rustfs.NewClientWithStore(memStore, "test-bucket")
 
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient, nil, nil)
 	return taskRepo, rustfsClient, r, memStore
 }
 

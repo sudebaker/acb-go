@@ -2,6 +2,7 @@ package db
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/sudebaker/acb-go/internal/models"
@@ -143,5 +144,37 @@ func TestExpirePendingTasks_MultipleExpired(t *testing.T) {
 		if got.Status != "pending" {
 			t.Errorf("task-%d: expected pending, got %s", i, got.Status)
 		}
+	}
+}
+
+func TestExpirePendingTasks_ZeroTimeout(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+
+	_, err := repo.ExpirePendingTasks(0)
+	if err == nil {
+		t.Fatal("expected error for zero timeout, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid timeout") {
+		t.Errorf("expected error containing 'invalid timeout', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "0") {
+		t.Errorf("expected error to reference value 0, got %q", err.Error())
+	}
+}
+
+func TestExpirePendingTasks_NegativeTimeout(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewTaskRepo(db)
+
+	_, err := repo.ExpirePendingTasks(-5)
+	if err == nil {
+		t.Fatal("expected error for negative timeout, got nil")
+	}
+	if !strings.Contains(err.Error(), "invalid timeout") {
+		t.Errorf("expected error containing 'invalid timeout', got %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "-5") {
+		t.Errorf("expected error to reference value -5, got %q", err.Error())
 	}
 }

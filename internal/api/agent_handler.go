@@ -102,7 +102,7 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate skills against allowed list
-	if h.cfg != nil && len(input.Skills) > 0 {
+	if len(input.Skills) > 0 {
 		if invalid := h.cfg.ValidateSkills(input.Skills); len(invalid) > 0 {
 			WriteError(w, 400, "invalid_skills", fmt.Sprintf("these skills are not allowed: %v. allowed: %v", invalid, h.cfg.AllowedSkills))
 			return

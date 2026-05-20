@@ -2,6 +2,7 @@ package timeout
 
 import (
 	"log"
+	"sync"
 	"time"
 
 	"github.com/sudebaker/acb-go/internal/db"
@@ -10,10 +11,11 @@ import (
 // PendingTimeoutService periodically checks for tasks that have been in
 // 'pending' status longer than the configured timeout and marks them as failed.
 type PendingTimeoutService struct {
-	repo        *db.TaskRepo
-	timeoutMin  int
+	repo          *db.TaskRepo
+	timeoutMin    int
 	checkInterval time.Duration
-	stopCh      chan struct{}
+	stopCh        chan struct{}
+	wg            sync.WaitGroup
 }
 
 // NewPendingTimeoutService creates a new timeout service.
@@ -35,15 +37,18 @@ func (s *PendingTimeoutService) Start() {
 		return
 	}
 	log.Printf("[INFO] PendingTimeout: started — timeout=%dm, checkInterval=%v", s.timeoutMin, s.checkInterval)
+	s.wg.Add(1)
 	go s.run()
 }
 
 // Stop signals the background goroutine to exit and waits for it to finish.
 func (s *PendingTimeoutService) Stop() {
 	close(s.stopCh)
+	s.wg.Wait()
 }
 
 func (s *PendingTimeoutService) run() {
+	defer s.wg.Done()
 	// Run once immediately on start
 	s.check()
 

@@ -318,11 +318,15 @@ func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
 // ExpirePendingTasks cancels tasks that have been in 'pending' status for longer
 // than timeoutMinutes and returns the IDs of expired tasks for logging.
 func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
+	if timeoutMinutes <= 0 {
+		return nil, fmt.Errorf("invalid timeout: %d must be > 0", timeoutMinutes)
+	}
+	modifier := fmt.Sprintf("-%d minutes", timeoutMinutes)
 	rows, err := r.db.Query(
 		`SELECT id, title FROM tasks
 		 WHERE status = 'pending'
-		 AND created_at < datetime('now', '-' || ? || ' minutes')`,
-		timeoutMinutes,
+		 AND created_at < datetime('now', ?)`,
+		modifier,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query pending expired tasks: %w", err)

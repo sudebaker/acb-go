@@ -83,8 +83,9 @@ func getEnvList(key, fallback string) []string {
 
 // IsValidSkill checks if a skill is in the allowed list.
 // If the allowed list is empty (not configured), all skills are valid.
+// Nil receiver is treated as "no restrictions" — all skills are valid.
 func (c *Config) IsValidSkill(skill string) bool {
-	if len(c.AllowedSkills) == 0 {
+	if c == nil || len(c.AllowedSkills) == 0 {
 		return true
 	}
 	for _, s := range c.AllowedSkills {
