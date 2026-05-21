@@ -1,15 +1,26 @@
 package db
 
 import (
+	"database/sql"
 	"testing"
 
 	"github.com/sudebaker/acb-go/internal/models"
 )
 
+// createParentTask inserts a task row so gates can reference it via FK.
+func createParentTask(t *testing.T, db *sql.DB, taskID string) {
+	t.Helper()
+	taskRepo := NewTaskRepo(db)
+	if err := taskRepo.Create(&models.Task{ID: taskID, Title: "parent task for gate"}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestCreateGate(t *testing.T) {
 	db := setupTestDB(t)
-	repo := NewGateRepo(db)
+	createParentTask(t, db, "t001")
 
+	repo := NewGateRepo(db)
 	gate := &models.Gate{
 		GateID:   "g001",
 		TaskID:   "t001",
@@ -23,8 +34,9 @@ func TestCreateGate(t *testing.T) {
 
 func TestGetGatesByTaskID(t *testing.T) {
 	db := setupTestDB(t)
-	repo := NewGateRepo(db)
+	createParentTask(t, db, "t001")
 
+	repo := NewGateRepo(db)
 	repo.CreateGate(&models.Gate{GateID: "g001", TaskID: "t001", Question: "Q1"})
 	repo.CreateGate(&models.Gate{GateID: "g002", TaskID: "t001", Question: "Q2"})
 
@@ -39,11 +51,13 @@ func TestGetGatesByTaskID(t *testing.T) {
 
 func TestAnswerGate(t *testing.T) {
 	db := setupTestDB(t)
+	createParentTask(t, db, "t001")
+
 	repo := NewGateRepo(db)
 	repo.CreateGate(&models.Gate{GateID: "g001", TaskID: "t001", Question: "Q1"})
 
 	// Directly set status to asked for testing
-	db.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = 'g001'")
+	db.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "g001")
 
 	if err := repo.AnswerGate("g001", "Yes"); err != nil {
 		t.Fatal(err)
@@ -57,6 +71,8 @@ func TestAnswerGate(t *testing.T) {
 
 func TestAnswerGate_NotAsked(t *testing.T) {
 	db := setupTestDB(t)
+	createParentTask(t, db, "t001")
+
 	repo := NewGateRepo(db)
 	repo.CreateGate(&models.Gate{GateID: "g001", TaskID: "t001", Question: "Q1"})
 
@@ -67,9 +83,11 @@ func TestAnswerGate_NotAsked(t *testing.T) {
 
 func TestResolveGate(t *testing.T) {
 	db := setupTestDB(t)
+	createParentTask(t, db, "t001")
+
 	repo := NewGateRepo(db)
 	repo.CreateGate(&models.Gate{GateID: "g001", TaskID: "t001", Question: "Q1"})
-	db.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = 'g001'")
+	db.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "g001")
 	repo.AnswerGate("g001", "Yes")
 
 	if err := repo.ResolveGate("g001"); err != nil {
@@ -84,6 +102,8 @@ func TestResolveGate(t *testing.T) {
 
 func TestResolveGate_NotAnswered(t *testing.T) {
 	db := setupTestDB(t)
+	createParentTask(t, db, "t001")
+
 	repo := NewGateRepo(db)
 	repo.CreateGate(&models.Gate{GateID: "g001", TaskID: "t001", Question: "Q1"})
 

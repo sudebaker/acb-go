@@ -34,28 +34,35 @@ func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
 	if err != nil {
 		return fmt.Errorf("marshal skills: %w", err)
 	}
+
+	// Handle NULL last_heartbeat: if agent.LastHeartbeat is nil, insert NULL
+	var heartbeat sql.NullTime
+	if agent.LastHeartbeat != nil {
+		heartbeat = sql.NullTime{Time: *agent.LastHeartbeat, Valid: true}
+	}
+
 	_, err = r.db.Exec(
 		`INSERT INTO agents (name, port, token, token_prefix, last_heartbeat, skills, webhook_url, webhook_secret)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT(name) DO UPDATE SET 
-	port = excluded.port, 
-	token = excluded.token,
-	token_prefix = excluded.token_prefix,
-	last_heartbeat = excluded.last_heartbeat,
-	skills = excluded.skills,
-	webhook_url = excluded.webhook_url,
-	webhook_secret = excluded.webhook_secret`,
-		agent.Name, agent.Port, hash, prefix, agent.LastHeartbeat, string(skills), agent.WebhookURL, encryptedSecret,
+	port = EXCLUDED.port, 
+	token = EXCLUDED.token,
+	token_prefix = EXCLUDED.token_prefix,
+	last_heartbeat = EXCLUDED.last_heartbeat,
+	skills = EXCLUDED.skills,
+	webhook_url = EXCLUDED.webhook_url,
+	webhook_secret = EXCLUDED.webhook_secret`,
+		agent.Name, agent.Port, hash, prefix, heartbeat, string(skills), agent.WebhookURL, encryptedSecret,
 	)
 	return err
 }
 
 func (r *AgentRepo) GetByName(name string) (*models.Agent, error) {
 	row := r.db.QueryRow(
-		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE name = ?`, name,
+		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE name = $1`, name,
 	)
 	agent := &models.Agent{}
-	var heartbeat sql.NullString
+	var heartbeat sql.NullTime
 	var skills, webhookSecret string
 	if err := row.Scan(&agent.Name, &agent.Port, &agent.Token, &heartbeat, &skills, &agent.WebhookURL, &webhookSecret); err != nil {
 		if err == sql.ErrNoRows {
@@ -64,7 +71,7 @@ func (r *AgentRepo) GetByName(name string) (*models.Agent, error) {
 		return nil, fmt.Errorf("scan agent: %w", err)
 	}
 	if heartbeat.Valid {
-		agent.LastHeartbeat = heartbeat.String
+		agent.LastHeartbeat = &heartbeat.Time
 	}
 	// Always clear token in response
 	agent.Token = ""
@@ -76,9 +83,9 @@ func (r *AgentRepo) GetByName(name string) (*models.Agent, error) {
 }
 
 func (r *AgentRepo) UpdateHeartbeat(name string) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC()
 	res, err := r.db.Exec(
-		"UPDATE agents SET last_heartbeat = ? WHERE name = ?", now, name,
+		"UPDATE agents SET last_heartbeat = $1 WHERE name = $2", now, name,
 	)
 	if err != nil {
 		return fmt.Errorf("update heartbeat: %w", err)
@@ -118,7 +125,7 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 
 func (r *AgentRepo) getByTokenPrefix(token, prefix string) (*models.Agent, error) {
 	rows, err := r.db.Query(
-		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE token_prefix = ?`, prefix,
+		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE token_prefix = $1`, prefix,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query agents: %w", err)
@@ -130,14 +137,14 @@ func (r *AgentRepo) getByTokenPrefix(token, prefix string) (*models.Agent, error
 func (r *AgentRepo) scanMatchingAgent(rows *sql.Rows, token string) (*models.Agent, error) {
 	for rows.Next() {
 		var a models.Agent
-		var heartbeat sql.NullString
+		var heartbeat sql.NullTime
 		var storedToken string
 		var skills, webhookSecret string
 		if err := rows.Scan(&a.Name, &a.Port, &storedToken, &heartbeat, &skills, &a.WebhookURL, &webhookSecret); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		if heartbeat.Valid {
-			a.LastHeartbeat = heartbeat.String
+			a.LastHeartbeat = &heartbeat.Time
 		}
 
 		// Only Argon2id verification - no plaintext fallback
@@ -160,10 +167,10 @@ func (r *AgentRepo) scanMatchingAgent(rows *sql.Rows, token string) (*models.Age
 }
 
 func (r *AgentRepo) ListStale(dur time.Duration) ([]models.Agent, error) {
-	cutoff := time.Now().UTC().Add(-dur).Format(time.RFC3339)
+	cutoff := time.Now().UTC().Add(-dur)
 	rows, err := r.db.Query(
 		`SELECT name, port, last_heartbeat, skills, webhook_url FROM agents
-WHERE last_heartbeat IS NULL OR last_heartbeat < ?`, cutoff,
+WHERE last_heartbeat IS NULL OR last_heartbeat < $1`, cutoff,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("list stale agents: %w", err)
@@ -173,13 +180,13 @@ WHERE last_heartbeat IS NULL OR last_heartbeat < ?`, cutoff,
 	var agents []models.Agent
 	for rows.Next() {
 		var a models.Agent
-		var heartbeat sql.NullString
+		var heartbeat sql.NullTime
 		var skills, webhookURL string
 		if err := rows.Scan(&a.Name, &a.Port, &heartbeat, &skills, &webhookURL); err != nil {
 			return nil, fmt.Errorf("scan agent: %w", err)
 		}
 		if heartbeat.Valid {
-			a.LastHeartbeat = heartbeat.String
+			a.LastHeartbeat = &heartbeat.Time
 		}
 		a.WebhookURL = webhookURL
 		if err := json.Unmarshal([]byte(skills), &a.Skills); err != nil {
@@ -192,7 +199,7 @@ WHERE last_heartbeat IS NULL OR last_heartbeat < ?`, cutoff,
 
 func (r *AgentRepo) GetSkills(name string) ([]string, error) {
 	var skills string
-	err := r.db.QueryRow("SELECT skills FROM agents WHERE name = ?", name).Scan(&skills)
+	err := r.db.QueryRow("SELECT skills FROM agents WHERE name = $1", name).Scan(&skills)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("agent %s not found", name)
 	}
@@ -239,14 +246,14 @@ func (r *AgentRepo) FindMatchingAgents(requiredSkills []string) ([]models.Agent,
 	var result []models.Agent
 	for rows.Next() {
 		var a models.Agent
-		var heartbeat sql.NullString
+		var heartbeat sql.NullTime
 		var skills string
 		var webhookURL, webhookSecret sql.NullString
 		if err := rows.Scan(&a.Name, &a.Port, &a.Token, &heartbeat, &skills, &webhookURL, &webhookSecret); err != nil {
 			return nil, fmt.Errorf("scan agent row: %w", err)
 		}
 		if heartbeat.Valid {
-			a.LastHeartbeat = heartbeat.String
+			a.LastHeartbeat = &heartbeat.Time
 		}
 		if webhookURL.Valid {
 			a.WebhookURL = webhookURL.String

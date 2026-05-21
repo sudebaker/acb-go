@@ -8,28 +8,69 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"testing"
 
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func getTestDSN() string {
+	host := os.Getenv("ACB_PG_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+	port := os.Getenv("ACB_PG_PORT")
+	if port == "" {
+		port = "5433"
+	}
+	user := os.Getenv("ACB_PG_USER")
+	if user == "" {
+		user = "acb"
+	}
+	password := os.Getenv("ACB_PG_PASSWORD")
+	if password == "" {
+		password = "acb-secure-pg-pass-2026"
+	}
+	database := os.Getenv("ACB_PG_DATABASE")
+	if database == "" {
+		database = "acb"
+	}
+	return "host=" + host + " port=" + port + " user=" + user + " password=" + password + " dbname=" + database + " sslmode=disable"
+}
 
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	d, err := sql.Open("sqlite3", t.TempDir()+"/dispatcher_test.db")
+	dsn := getTestDSN()
+	d, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := d.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	// Clean tables
+	tables := []string{"task_events", "gates", "agents", "tasks"}
+	for _, table := range tables {
+		d.Exec("DELETE FROM " + table)
+	}
+	d.Exec("DELETE FROM schema_version")
 	if err := db.RunMigrations(d); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		tables := []string{"task_events", "gates", "agents", "tasks"}
+		for _, table := range tables {
+			d.Exec("DELETE FROM " + table)
+		}
+		d.Close()
+	})
 	return d
 }
 
 func TestFindNextForAgent_NoTasks(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
@@ -46,7 +87,6 @@ func TestFindNextForAgent_NoTasks(t *testing.T) {
 
 func TestFindNextForAgent_WithMatchingSkills(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
@@ -68,7 +108,6 @@ func TestFindNextForAgent_WithMatchingSkills(t *testing.T) {
 
 func TestFindNextForAgent_NoMatchingSkills(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
@@ -86,7 +125,6 @@ func TestFindNextForAgent_NoMatchingSkills(t *testing.T) {
 
 func TestFindNextForAgent_TaskWithNoRequiredSkills(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
@@ -107,7 +145,6 @@ func TestFindNextForAgent_TaskWithNoRequiredSkills(t *testing.T) {
 
 func TestFindNextForAgent_PriorityOrder(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
@@ -129,7 +166,6 @@ func TestFindNextForAgent_PriorityOrder(t *testing.T) {
 
 func TestFindNextForAgent_UnknownAgent(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
@@ -162,7 +198,6 @@ func (m *mockHTTPDoer) Do(req *http.Request) (*http.Response, error) {
 
 func TestDispatchNewTask_WebhookSuccess(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
@@ -197,7 +232,6 @@ func TestDispatchNewTask_WebhookSuccess(t *testing.T) {
 
 func TestDispatchNewTask_NoWebhookAgents(t *testing.T) {
 	d := setupTestDB(t)
-	defer d.Close()
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 

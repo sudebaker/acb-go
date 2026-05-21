@@ -8,7 +8,11 @@ import (
 
 type Config struct {
 	Port                   int
-	DBPath                 string
+	PGHost                 string
+	PGPort                 int
+	PGUser                 string
+	PGPassword             string
+	PGDatabase             string
 	RedisAddr              string
 	RedisPass              string
 	RustFSEndpoint         string
@@ -28,7 +32,11 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		Port:               getEnvInt("ACB_PORT", 8090),
-		DBPath:             getEnv("ACB_DB_PATH", "/var/lib/acb/acb.db"),
+		PGHost:             getEnv("ACB_PG_HOST", "localhost"),
+		PGPort:             getEnvInt("ACB_PG_PORT", 5433),
+		PGUser:             getEnv("ACB_PG_USER", "acb"),
+		PGPassword:         getEnv("ACB_PG_PASSWORD", ""),
+		PGDatabase:         getEnv("ACB_PG_DATABASE", "acb"),
 		RedisAddr:          getEnv("ACB_REDIS_ADDR", "localhost:6379"),
 		RedisPass:          getEnv("ACB_REDIS_PASS", ""),
 		RustFSEndpoint:     getEnv("ACB_RUSTFS_ENDPOINT", "localhost:8085"),

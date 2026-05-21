@@ -38,8 +38,8 @@ func TestExpirePendingTasks_NoExpired(t *testing.T) {
 }
 
 func TestExpirePendingTasks_ExpiredTask(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewTaskRepo(db)
+	testDB := setupTestDB(t)
+	repo := NewTaskRepo(testDB)
 
 	// Create a task and backdate its created_at
 	task := &models.Task{
@@ -51,8 +51,8 @@ func TestExpirePendingTasks_ExpiredTask(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Backdate created_at to 20 minutes ago
-	_, err := db.Exec("UPDATE tasks SET created_at = datetime('now', '-20 minutes') WHERE id = ?", "task-old")
+	// Backdate created_at to 20 minutes ago (PostgreSQL syntax)
+	_, err := testDB.Exec("UPDATE tasks SET created_at = NOW() - interval '20 minutes' WHERE id = $1", "task-old")
 	if err != nil {
 		t.Fatalf("backdate: %v", err)
 	}
@@ -77,8 +77,8 @@ func TestExpirePendingTasks_ExpiredTask(t *testing.T) {
 }
 
 func TestExpirePendingTasks_ClaimedNotExpired(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewTaskRepo(db)
+	testDB := setupTestDB(t)
+	repo := NewTaskRepo(testDB)
 
 	// Create a task, then claim it
 	task := &models.Task{
@@ -93,8 +93,8 @@ func TestExpirePendingTasks_ClaimedNotExpired(t *testing.T) {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
-	// Backdate
-	_, _ = db.Exec("UPDATE tasks SET created_at = datetime('now', '-30 minutes') WHERE id = ?", "task-claimed-old")
+	// Backdate (PostgreSQL syntax)
+	_, _ = testDB.Exec("UPDATE tasks SET created_at = NOW() - interval '30 minutes' WHERE id = $1", "task-claimed-old")
 
 	ids, err := repo.ExpirePendingTasks(15)
 	if err != nil {
@@ -111,8 +111,8 @@ func TestExpirePendingTasks_ClaimedNotExpired(t *testing.T) {
 }
 
 func TestExpirePendingTasks_MultipleExpired(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewTaskRepo(db)
+	testDB := setupTestDB(t)
+	repo := NewTaskRepo(testDB)
 
 	for i := 0; i < 5; i++ {
 		task := &models.Task{
@@ -125,9 +125,9 @@ func TestExpirePendingTasks_MultipleExpired(t *testing.T) {
 		}
 	}
 
-	// Backdate first 3 tasks
+	// Backdate first 3 tasks (PostgreSQL syntax)
 	for i := 0; i < 3; i++ {
-		_, _ = db.Exec("UPDATE tasks SET created_at = datetime('now', '-20 minutes') WHERE id = ?", fmt.Sprintf("task-%d", i))
+		_, _ = testDB.Exec("UPDATE tasks SET created_at = NOW() - interval '20 minutes' WHERE id = $1", fmt.Sprintf("task-%d", i))
 	}
 
 	ids, err := repo.ExpirePendingTasks(15)

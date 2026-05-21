@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,21 +11,60 @@ import (
 
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const testToken = "test-token"
 
+func getTestDSN() string {
+	return dbTestDSN()
+}
+
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	d, err := sql.Open("sqlite3", t.TempDir()+"/test.db")
+	dsn := getTestDSN()
+	d, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := d.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	// Clean all tables before each test for isolation
+	apiCleanTables(t, d)
 	if err := db.RunMigrations(d); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		apiCleanTables(t, d)
+		d.Close()
+	})
 	return d
+}
+
+func apiCleanTables(t *testing.T, d *sql.DB) {
+	t.Helper()
+	tables := []string{"task_events", "gates", "agents", "tasks"}
+	for _, table := range tables {
+		_, err := d.Exec(fmt.Sprintf(`
+			DO $$
+			BEGIN
+				DELETE FROM %s;
+			EXCEPTION WHEN undefined_table THEN NULL;
+			END $$;
+		`, table))
+		if err != nil {
+			// Table may not exist yet (first run before migrations)
+			t.Logf("apiCleanTables: could not clean %s: %v", table, err)
+		}
+	}
+	_, _ = d.Exec(`
+		DO $$
+		BEGIN
+			DELETE FROM schema_version;
+		EXCEPTION WHEN undefined_table THEN NULL;
+		END $$;
+	`)
 }
 
 func setupRouter(t *testing.T) (*sql.DB, http.Handler) {
@@ -305,7 +345,7 @@ func TestUnblockTask_200(t *testing.T) {
 	taskRepo.StartTask("t001")
 	taskRepo.UpdateStatus("t001", "blocked")
 	gateRepo.CreateGate(&models.Gate{GateID: "g001", TaskID: "t001", Question: "Q?"})
-	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = 'g001'")
+	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "g001")
 	gateRepo.AnswerGate("g001", "yes")
 
 	req := authRequest("POST", "/tasks/t001/unblock", `{"gate_id":"g001"}`)

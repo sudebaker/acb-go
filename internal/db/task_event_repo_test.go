@@ -4,18 +4,31 @@ import (
 	"database/sql"
 	"testing"
 
-	_ "github.com/mattn/go-sqlite3"
+	"github.com/sudebaker/acb-go/internal/models"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func TestTaskEventRepo(t *testing.T) {
-	db, err := sql.Open("sqlite3", t.TempDir()+"/test.db")
+	dsn := getTestDSN()
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := db.Ping(); err != nil {
+		t.Fatal(err)
+	}
 
+	// Clean and run migrations
+	cleanTables(t, db)
 	if err := RunMigrations(db); err != nil {
 		t.Fatal(err)
+	}
+
+	// Create a parent task first to satisfy FK constraint
+	taskRepo := NewTaskRepo(db)
+	if err := taskRepo.Create(&models.Task{ID: "task-001", Title: "test task for events"}); err != nil {
+		t.Fatalf("failed to create parent task: %v", err)
 	}
 
 	repo := NewTaskEventRepo(db)

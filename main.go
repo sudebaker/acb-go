@@ -20,7 +20,7 @@ import (
 func main() {
 	cfg := config.Load()
 
-	database, err := db.Open(cfg.DBPath)
+	database, err := db.Open(cfg.PGHost, cfg.PGPort, cfg.PGUser, cfg.PGPassword, cfg.PGDatabase)
 	if err != nil {
 		log.Fatal(err)
 	}

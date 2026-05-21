@@ -86,7 +86,7 @@ func StoreTokenHash(repo *AgentRepo, agentName, token string) error {
 		return err
 	}
 	_, err = repo.db.Exec(
-		`UPDATE agents SET token = ?, token_prefix = ? WHERE name = ?`, hash, prefix, agentName,
+		`UPDATE agents SET token = $1, token_prefix = $2 WHERE name = $3`, hash, prefix, agentName,
 	)
 	return err
 }
@@ -94,7 +94,7 @@ func StoreTokenHash(repo *AgentRepo, agentName, token string) error {
 // CheckToken verifies a token against the stored hash.
 func CheckToken(repo *AgentRepo, agentName, token string) (bool, error) {
 	var storedHash string
-	err := repo.db.QueryRow(`SELECT token FROM agents WHERE name = ?`, agentName).Scan(&storedHash)
+	err := repo.db.QueryRow(`SELECT token FROM agents WHERE name = $1`, agentName).Scan(&storedHash)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			return false, nil

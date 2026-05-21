@@ -4,32 +4,18 @@ import (
 	"database/sql"
 	"fmt"
 
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-func enableWAL(db *sql.DB) error {
-	_, err := db.Exec("PRAGMA journal_mode=WAL")
-	if err != nil {
-		return fmt.Errorf("enable WAL: %w", err)
-	}
-	_, err = db.Exec("PRAGMA busy_timeout=5000")
-	if err != nil {
-		return fmt.Errorf("set busy_timeout: %w", err)
-	}
-	return nil
-}
-
-func Open(path string) (*sql.DB, error) {
-	db, err := sql.Open("sqlite3", path)
+func Open(host string, port int, user, password, database string) (*sql.DB, error) {
+	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=disable",
+		host, port, user, password, database)
+	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping db: %w", err)
-	}
-	db.SetMaxOpenConns(1)
-	if err := enableWAL(db); err != nil {
-		return nil, err
 	}
 	return db, nil
 }

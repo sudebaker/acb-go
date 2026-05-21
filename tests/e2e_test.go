@@ -3,6 +3,7 @@ package tests_test
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,16 +12,55 @@ import (
 	"github.com/sudebaker/acb-go/internal/api"
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-func TestFullTaskLifecycle(t *testing.T) {
-	d, err := sql.Open("sqlite3", t.TempDir()+"/test.db")
+func getTestDSN() string {
+	return "host=localhost port=5433 user=acb password=acb-secure-pg-pass-2026 dbname=acb sslmode=disable"
+}
+
+func setupE2EDB(t *testing.T) *sql.DB {
+	t.Helper()
+	d, err := sql.Open("pgx", getTestDSN())
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer d.Close()
-	db.RunMigrations(d)
+	if err := d.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	// Clean tables using DO blocks to handle missing tables gracefully
+	tables := []string{"task_events", "gates", "agents", "tasks"}
+	for _, table := range tables {
+		_, _ = d.Exec(fmt.Sprintf(`
+			DO $$
+			BEGIN
+				DELETE FROM %s;
+			EXCEPTION WHEN undefined_table THEN NULL;
+			END $$;
+		`, table))
+	}
+	_, _ = d.Exec(`
+		DO $$
+		BEGIN
+			DELETE FROM schema_version;
+		EXCEPTION WHEN undefined_table THEN NULL;
+		END $$;
+	`)
+	if err := db.RunMigrations(d); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		// Use TRUNCATE CASCADE in cleanup since tables now exist after migration
+		for _, table := range tables {
+			d.Exec("DELETE FROM " + table)
+		}
+		d.Close()
+	})
+	return d
+}
+
+func TestFullTaskLifecycle(t *testing.T) {
+	d := setupE2EDB(t)
 
 	taskRepo := db.NewTaskRepo(d)
 	gateRepo := db.NewGateRepo(d)
@@ -86,7 +126,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 
 	// POST /tasks/:id/unblock → 200, status=in_progress
 	// Gate was created by block; transition it to answered
-	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = 'g001'")
+	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "g001")
 	gateRepo.AnswerGate("g001", "yes")
 
 	req = auth("POST", "/tasks/t001/unblock", `{"gate_id":"g001"}`)

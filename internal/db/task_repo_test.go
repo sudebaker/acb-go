@@ -1,26 +1,12 @@
 package db
 
 import (
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
 
 	"github.com/sudebaker/acb-go/internal/models"
 )
-
-func setupTestDB(t *testing.T) *sql.DB {
-	t.Helper()
-	db, err := sql.Open("sqlite3", t.TempDir()+"/test.db")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := RunMigrations(db); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { db.Close() })
-	return db
-}
 
 func TestCreateAndGetTask(t *testing.T) {
 	db := setupTestDB(t)
@@ -336,12 +322,15 @@ func TestListTasks_WithRequiredSkills(t *testing.T) {
 	t.Logf("Got %d tasks with skill filter", len(tasks))
 }
 
-
-
 // Test gate timestamps
 func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
-	db := setupTestDB(t)
-	repo := NewGateRepo(db)
+	testDB := setupTestDB(t)
+	// Create parent task first to satisfy FK constraint
+	taskRepo := NewTaskRepo(testDB)
+	if err := taskRepo.Create(&models.Task{ID: "task-001", Title: "parent task"}); err != nil {
+		t.Fatalf("failed to create parent task: %v", err)
+	}
+	repo := NewGateRepo(testDB)
 
 	gate := &models.Gate{
 		GateID:   "gate-001",
@@ -364,7 +353,7 @@ func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
 	if len(gates) != 1 {
 		t.Fatalf("expected 1 gate, got %d", len(gates))
 	}
-	if gates[0].CreatedAt == "" {
+	if gates[0].CreatedAt.IsZero() {
 		t.Errorf("createdAt should be set")
 	}
 	if gates[0].AnsweredAt != nil {
@@ -372,7 +361,7 @@ func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
 	}
 
 	// Transition gate to 'asked' status, then answer it
-	_, err = db.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = ?", "gate-001")
+	_, err = testDB.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "gate-001")
 	if err != nil {
 		t.Fatalf("failed to set gate status to asked: %v", err)
 	}
@@ -388,16 +377,16 @@ func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to get gates: %v", err)
 	}
-	if gates[0].AnsweredAt == nil || *gates[0].AnsweredAt == "" {
+	if gates[0].AnsweredAt == nil || gates[0].AnsweredAt.IsZero() {
 		t.Errorf("answeredAt should be set after answering")
 	}
 }
 
 // Test that task events are logged on state transitions
 func TestTaskEventsLoggedOnTransitions(t *testing.T) {
-	db := setupTestDB(t)
-	eventRepo := NewTaskEventRepo(db)
-	repo := NewTaskRepo(db)
+	testDB := setupTestDB(t)
+	eventRepo := NewTaskEventRepo(testDB)
+	repo := NewTaskRepo(testDB)
 	repo.WithEventRepo(eventRepo)
 
 	// Create task

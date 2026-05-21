@@ -1,9 +1,37 @@
 package db
 
-import "database/sql"
+import (
+	"database/sql"
+	"log"
+)
 
 func RunMigrations(db *sql.DB) error {
-	schema := `
+	// Create schema_version table for proper migration tracking
+	if _, err := db.Exec(`
+CREATE TABLE IF NOT EXISTS schema_version (
+	version INTEGER PRIMARY KEY,
+	applied_at TIMESTAMP NOT NULL DEFAULT NOW()
+);
+	`); err != nil {
+		return err
+	}
+
+	// Check current version
+	var currentVersion int
+	row := db.QueryRow(`SELECT COALESCE(MAX(version), 0) FROM schema_version`)
+	if err := row.Scan(&currentVersion); err != nil {
+		return err
+	}
+
+	type migration struct {
+		version int
+		sql     string
+	}
+
+	migrations := []migration{
+		{
+			version: 1,
+			sql: `
 CREATE TABLE IF NOT EXISTS tasks (
 	id TEXT PRIMARY KEY,
 	title TEXT NOT NULL,
@@ -19,8 +47,8 @@ CREATE TABLE IF NOT EXISTS tasks (
 	body_context TEXT NOT NULL DEFAULT '',
 	body_deliverable_format TEXT NOT NULL DEFAULT 'markdown',
 	body_deliverable_path TEXT NOT NULL DEFAULT '',
-	created_at TEXT NOT NULL DEFAULT (datetime('now')),
-	updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+	created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+	updated_at TIMESTAMP NOT NULL DEFAULT NOW(),
 	summary TEXT NOT NULL DEFAULT '',
 	artifacts_json TEXT NOT NULL DEFAULT '[]'
 );
@@ -33,15 +61,15 @@ CREATE TABLE IF NOT EXISTS gates (
 	status TEXT NOT NULL DEFAULT 'pending'
 		CHECK(status IN ('pending','asked','answered','resolved')),
 	answer TEXT NOT NULL DEFAULT '',
-	created_at TEXT NOT NULL DEFAULT (datetime('now')),
-	answered_at TEXT DEFAULT NULL
+	created_at TIMESTAMP NOT NULL DEFAULT NOW(),
+	answered_at TIMESTAMP DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS agents (
 	name TEXT PRIMARY KEY,
 	port INTEGER NOT NULL DEFAULT 0,
 	token TEXT NOT NULL DEFAULT '',
-	last_heartbeat TEXT,
+	last_heartbeat TIMESTAMP,
 	skills TEXT NOT NULL DEFAULT '[]',
 	webhook_url TEXT NOT NULL DEFAULT '',
 	webhook_secret TEXT NOT NULL DEFAULT '',
@@ -49,31 +77,43 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 
 CREATE TABLE IF NOT EXISTS task_events (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
+	id SERIAL PRIMARY KEY,
 	task_id TEXT NOT NULL REFERENCES tasks(id),
 	event TEXT NOT NULL,
 	agent TEXT NOT NULL,
-	timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+	timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	detail TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id);
-	CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
-	`
-	db.Exec(`CREATE INDEX IF NOT EXISTS idx_agents_token_prefix ON agents(token_prefix)`)
-
-	if _, err := db.Exec(schema); err != nil {
-		return err
+CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
+CREATE INDEX IF NOT EXISTS idx_agents_token_prefix ON agents(token_prefix);
+`,
+		},
 	}
 
-	// Migrations for existing databases that lack newer columns
-	migrations := []string{
-		`ALTER TABLE agents ADD COLUMN webhook_url TEXT NOT NULL DEFAULT ''`,
-		`ALTER TABLE agents ADD COLUMN webhook_secret TEXT NOT NULL DEFAULT ''`,
-	}
 	for _, m := range migrations {
-		// Ignore errors — column may already exist
-		db.Exec(m)
+		if m.version <= currentVersion {
+			continue
+		}
+		log.Printf("[DB] Applying migration version %d", m.version)
+		tx, err := db.Begin()
+		if err != nil {
+			return err
+		}
+		if _, err := tx.Exec(m.sql); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES ($1)`, m.version); err != nil {
+			tx.Rollback()
+			return err
+		}
+		if err := tx.Commit(); err != nil {
+			return err
+		}
+		log.Printf("[DB] Migration version %d applied", m.version)
 	}
+
 	return nil
 }

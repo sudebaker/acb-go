@@ -95,8 +95,11 @@ func TestUpdateHeartbeat(t *testing.T) {
 	}
 
 	got, _ := repo.GetByName("agent-alpha")
-	if got.LastHeartbeat == "" {
+	if got.LastHeartbeat == nil {
 		t.Error("expected heartbeat to be set")
+	}
+	if got.LastHeartbeat != nil && time.Since(*got.LastHeartbeat) > 5*time.Second {
+		t.Errorf("heartbeat time too far in the past: %v", got.LastHeartbeat)
 	}
 }
 
@@ -290,5 +293,3 @@ func TestFindMatchingAgents(t *testing.T) {
 		t.Errorf("expected 0 agents with 'rust' skill, got %d", len(agents))
 	}
 }
-
-

@@ -10,6 +10,26 @@ import (
 	"github.com/sudebaker/acb-go/internal/models"
 )
 
+// PostgreSQL timestamp formats (used in parseTime helpers)
+const (
+	pgTimestampMicro = "2006-01-02 15:04:05.999999+00"
+	pgTimestampSec   = "2006-01-02 15:04:05+00"
+	pgTimestampNoTZ  = "2006-01-02 15:04:05"
+)
+
+func parseTime(s string) time.Time {
+	if s == "" {
+		return time.Time{}
+	}
+	for _, fmt := range []string{pgTimestampMicro, pgTimestampSec, pgTimestampNoTZ, time.RFC3339} {
+		if parsed, err := time.Parse(fmt, s); err == nil {
+			return parsed
+		}
+	}
+	log.Printf("[WARN] parseTime: failed to parse %q", s)
+	return time.Time{}
+}
+
 type ConflictError struct {
 	CurrentStatus string
 	Message       string
@@ -20,8 +40,8 @@ func (e *ConflictError) Error() string {
 }
 
 type TaskRepo struct {
-	db           *sql.DB
-	eventRepo    *TaskEventRepo
+	db        *sql.DB
+	eventRepo *TaskEventRepo
 }
 
 func NewTaskRepo(db *sql.DB) *TaskRepo {
@@ -62,7 +82,7 @@ func (r *TaskRepo) Create(task *models.Task) error {
 		`INSERT INTO tasks (id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
 			summary, artifacts_json)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
 		task.ID, task.Title, task.Assignee, task.Status, task.Priority,
 		string(parents), string(skills), string(requiredSkills), string(tags),
 		task.BodyGoal, task.BodyContext,
@@ -77,7 +97,7 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 		`SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
 			created_at, updated_at, summary, artifacts_json
-		FROM tasks WHERE id = ?`, id,
+		FROM tasks WHERE id = $1`, id,
 	)
 
 	task := &models.Task{}
@@ -97,16 +117,8 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 		return nil, fmt.Errorf("scan task: %w", err)
 	}
 
-	if parsed, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
-		task.CreatedAt = parsed
-	} else {
-		log.Printf("[WARN] GetByID: failed to parse created_at %q: %v", createdAt, err)
-	}
-	if parsed, err := time.Parse("2006-01-02 15:04:05", updatedAt); err == nil {
-		task.UpdatedAt = parsed
-	} else {
-		log.Printf("[WARN] GetByID: failed to parse updated_at %q: %v", updatedAt, err)
-	}
+	task.CreatedAt = parseTime(createdAt)
+	task.UpdatedAt = parseTime(updatedAt)
 	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
 		log.Printf("[WARN] GetByID: failed to unmarshal parents: %v", err)
 	}
@@ -132,19 +144,23 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]models.Task, error) {
 	query := "SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags, body_goal, body_context, body_deliverable_format, body_deliverable_path, created_at, updated_at, summary, artifacts_json FROM tasks WHERE 1=1"
 	var args []interface{}
+	paramIdx := 1
 	if status != "" {
-		query += " AND status = ?"
+		query += fmt.Sprintf(" AND status = $%d", paramIdx)
 		args = append(args, status)
+		paramIdx++
 	}
 	if assignee != "" {
-		query += " AND assignee = ?"
+		query += fmt.Sprintf(" AND assignee = $%d", paramIdx)
 		args = append(args, assignee)
+		paramIdx++
 	}
 
 	// Filter by required_skills - task must have ALL required skills
 	for _, skill := range requiredSkills {
-		query += " AND required_skills LIKE ?"
+		query += fmt.Sprintf(" AND required_skills LIKE $%d", paramIdx)
 		args = append(args, fmt.Sprintf("%%%s%%", skill))
+		paramIdx++
 	}
 
 	rows, err := r.db.Query(query, args...)
@@ -158,46 +174,34 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 		var t models.Task
 		var parents, skills, reqSkills, tags, artifacts string
 		var createdAt, updatedAt sql.NullString
-	if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status, &t.Priority, &parents, &skills, &reqSkills, &tags, &t.BodyGoal, &t.BodyContext, &t.BodyDeliverableFmt, &t.BodyDeliverablePath, &createdAt, &updatedAt, &t.Summary, &artifacts); err != nil {
-		return nil, fmt.Errorf("scan task row: %w", err)
-	}
-	if createdAt.Valid {
-		if parsed, err := time.Parse("2006-01-02 15:04:05", createdAt.String); err == nil {
-			t.CreatedAt = parsed
-		} else {
-			log.Printf("[WARN] List: failed to parse created_at %q: %v", createdAt.String, err)
+		if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status, &t.Priority, &parents, &skills, &reqSkills, &tags, &t.BodyGoal, &t.BodyContext, &t.BodyDeliverableFmt, &t.BodyDeliverablePath, &createdAt, &updatedAt, &t.Summary, &artifacts); err != nil {
+			return nil, fmt.Errorf("scan task row: %w", err)
 		}
-	}
-	if updatedAt.Valid {
-		if parsed, err := time.Parse("2006-01-02 15:04:05", updatedAt.String); err == nil {
-			t.UpdatedAt = parsed
-		} else {
-			log.Printf("[WARN] List: failed to parse updated_at %q: %v", updatedAt.String, err)
+		t.CreatedAt = parseTime(createdAt.String)
+		t.UpdatedAt = parseTime(updatedAt.String)
+		if err := json.Unmarshal([]byte(parents), &t.Parents); err != nil {
+			log.Printf("[WARN] List: failed to unmarshal parents: %v", err)
 		}
-	}
-	if err := json.Unmarshal([]byte(parents), &t.Parents); err != nil {
-		log.Printf("[WARN] List: failed to unmarshal parents: %v", err)
-	}
-	if err := json.Unmarshal([]byte(skills), &t.Skills); err != nil {
-		log.Printf("[WARN] List: failed to unmarshal skills: %v", err)
-	}
-	if err := json.Unmarshal([]byte(reqSkills), &t.RequiredSkills); err != nil {
-		log.Printf("[WARN] List: failed to unmarshal required_skills: %v", err)
-	}
-	if err := json.Unmarshal([]byte(tags), &t.Tags); err != nil {
-		log.Printf("[WARN] List: failed to unmarshal tags: %v", err)
-	}
-	if err := json.Unmarshal([]byte(artifacts), &t.Artifacts); err != nil {
-		log.Printf("[WARN] List: failed to unmarshal artifacts: %v", err)
-	}
-	tasks = append(tasks, t)
+		if err := json.Unmarshal([]byte(skills), &t.Skills); err != nil {
+			log.Printf("[WARN] List: failed to unmarshal skills: %v", err)
+		}
+		if err := json.Unmarshal([]byte(reqSkills), &t.RequiredSkills); err != nil {
+			log.Printf("[WARN] List: failed to unmarshal required_skills: %v", err)
+		}
+		if err := json.Unmarshal([]byte(tags), &t.Tags); err != nil {
+			log.Printf("[WARN] List: failed to unmarshal tags: %v", err)
+		}
+		if err := json.Unmarshal([]byte(artifacts), &t.Artifacts); err != nil {
+			log.Printf("[WARN] List: failed to unmarshal artifacts: %v", err)
+		}
+		tasks = append(tasks, t)
 	}
 	return tasks, rows.Err()
 }
 
 func (r *TaskRepo) UpdateStatus(id, status string) error {
 	res, err := r.db.Exec(
-		`UPDATE tasks SET status = ?, updated_at = datetime('now') WHERE id = ?`,
+		`UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2`,
 		status, id,
 	)
 	if err != nil {
@@ -214,7 +218,7 @@ func (r *TaskRepo) UpdateStatus(id, status string) error {
 
 func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 	res, err := r.db.Exec(
-		"UPDATE tasks SET status = 'claimed', assignee = ?, updated_at = datetime('now') WHERE id = ? AND status = 'pending'",
+		"UPDATE tasks SET status = 'claimed', assignee = $1, updated_at = NOW() WHERE id = $2 AND status = 'pending'",
 		assignee, id,
 	)
 	if err != nil {
@@ -223,7 +227,7 @@ func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
@@ -237,7 +241,7 @@ func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 
 func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 	res, err := r.db.Exec(
-		"UPDATE tasks SET status = 'in_progress', updated_at = datetime('now') WHERE id = ? AND status = 'claimed'",
+		"UPDATE tasks SET status = 'in_progress', updated_at = NOW() WHERE id = $1 AND status = 'claimed'",
 		id,
 	)
 	if err != nil {
@@ -246,7 +250,7 @@ func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
@@ -259,14 +263,14 @@ func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 }
 
 func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'blocked', updated_at = datetime('now') WHERE id = ? AND status IN ('in_progress', 'claimed')", id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'blocked', updated_at = NOW() WHERE id = $1 AND status IN ('in_progress', 'claimed')", id)
 	if err != nil {
 		return nil, fmt.Errorf("block task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress or claimed status"}
 	}
 
@@ -276,14 +280,14 @@ func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
 }
 
 func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = ?, updated_at = datetime('now') WHERE id = ? AND status = 'in_progress'", summary, id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'", summary, id)
 	if err != nil {
 		return nil, fmt.Errorf("complete task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
@@ -296,14 +300,14 @@ func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
 }
 
 func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = ?, updated_at = datetime('now') WHERE id = ? AND status = 'in_progress'", reason, id)
+	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'", reason, id)
 	if err != nil {
 		return nil, fmt.Errorf("fail task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = ?", id).Scan(&current)
+		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
@@ -321,12 +325,12 @@ func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
 	if timeoutMinutes <= 0 {
 		return nil, fmt.Errorf("invalid timeout: %d must be > 0", timeoutMinutes)
 	}
-	modifier := fmt.Sprintf("-%d minutes", timeoutMinutes)
+	intervalStr := fmt.Sprintf("%d minutes", timeoutMinutes)
 	rows, err := r.db.Query(
 		`SELECT id, title FROM tasks
 		 WHERE status = 'pending'
-		 AND created_at < datetime('now', ?)`,
-		modifier,
+		 AND created_at < NOW() - $1::interval`,
+		intervalStr,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query pending expired tasks: %w", err)
@@ -349,7 +353,7 @@ func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
 
 	for _, id := range expiredIDs {
 		_, err := r.db.Exec(
-			`UPDATE tasks SET status = 'failed', summary = 'Task expired: no agent claimed within timeout period', updated_at = datetime('now') WHERE id = ? AND status = 'pending'`,
+			`UPDATE tasks SET status = 'failed', summary = 'Task expired: no agent claimed within timeout period', updated_at = NOW() WHERE id = $1 AND status = 'pending'`,
 			id,
 		)
 		if err != nil {
@@ -364,7 +368,7 @@ func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
 
 func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
 	var raw string
-	err := r.db.QueryRow("SELECT artifacts_json FROM tasks WHERE id = ?", id).Scan(&raw)
+	err := r.db.QueryRow("SELECT artifacts_json FROM tasks WHERE id = $1", id).Scan(&raw)
 	if err == sql.ErrNoRows {
 		return "", fmt.Errorf("task %s not found", id)
 	}
@@ -375,7 +379,7 @@ func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
 }
 
 func (r *TaskRepo) SetArtifactsJSON(id, raw string) error {
-	_, err := r.db.Exec("UPDATE tasks SET artifacts_json = ? WHERE id = ?", raw, id)
+	_, err := r.db.Exec("UPDATE tasks SET artifacts_json = $1 WHERE id = $2", raw, id)
 	return err
 }
 

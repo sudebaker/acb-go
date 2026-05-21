@@ -17,7 +17,7 @@ func NewTaskEventRepo(db *sql.DB) *TaskEventRepo {
 
 func (r *TaskEventRepo) InsertEvent(taskID, event, agent, detail string) error {
 	_, err := r.db.Exec(
-		`INSERT INTO task_events (task_id, event, agent, detail) VALUES (?, ?, ?, ?)`,
+		`INSERT INTO task_events (task_id, event, agent, detail) VALUES ($1, $2, $3, $4)`,
 		taskID, event, agent, detail,
 	)
 	if err != nil {
@@ -30,7 +30,7 @@ func (r *TaskEventRepo) ListByTask(taskID string) ([]models.TaskEvent, error) {
 	rows, err := r.db.Query(
 		`SELECT task_id, event, agent, timestamp, detail
 		 FROM task_events
-		 WHERE task_id = ?
+		 WHERE task_id = $1
 		 ORDER BY timestamp DESC`,
 		taskID,
 	)
