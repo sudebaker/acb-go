@@ -20,6 +20,9 @@ type Task struct {
 	UpdatedAt           time.Time  `json:"updated_at"`
 	Summary             string     `json:"summary"`
 	Artifacts           []Artifact `json:"artifacts"`
+	LastHeartbeat       *time.Time `json:"last_heartbeat,omitempty"`
+	MaxRetries          int        `json:"max_retries"`
+	RetryCount          int        `json:"retry_count"`
 }
 
 type TaskEvent struct {

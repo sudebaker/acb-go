@@ -91,7 +91,19 @@ func (d *Dispatcher) Stop() {
 
 // DispatchNewTask is called when a new task is created.
 // It finds matching agents and POSTs the task to their webhook URLs.
+// Skips tasks whose parent tasks are not completed.
 func (d *Dispatcher) DispatchNewTask(task *models.Task) {
+	// Skip tasks with uncompleted parents
+	if len(task.Parents) > 0 {
+		for _, parentID := range task.Parents {
+			parent, err := d.taskRepo.GetByID(parentID)
+			if err != nil || parent == nil || parent.Status != "completed" {
+				log.Printf("[dispatcher] task %s has uncompleted parent %s, skipping dispatch", task.ID, parentID)
+				return
+			}
+		}
+	}
+
 	agents, err := d.agentRepo.FindMatchingAgents(task.RequiredSkills)
 	if err != nil {
 		log.Printf("[dispatcher] error finding matching agents: %v", err)
@@ -378,6 +390,20 @@ func FindNextForAgent(agentRepo *db.AgentRepo, taskRepo *db.TaskRepo, agentName 
 
 	var matching []models.Task
 	for _, t := range tasks {
+		// Skip tasks with uncompleted parents
+		if len(t.Parents) > 0 {
+			parentsDone := true
+			for _, parentID := range t.Parents {
+				parentTask, err := taskRepo.GetByID(parentID)
+				if err != nil || parentTask == nil || parentTask.Status != "completed" {
+					parentsDone = false
+					break
+				}
+			}
+			if !parentsDone {
+				continue
+			}
+		}
 		if len(t.RequiredSkills) == 0 {
 			matching = append(matching, t)
 			continue

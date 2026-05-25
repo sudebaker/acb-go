@@ -63,12 +63,12 @@ func setupTimeoutTestDB(t *testing.T) *sql.DB {
 	return database
 }
 
-func TestPendingTimeoutService_Disabled(t *testing.T) {
+func TestTimeoutService_Disabled(t *testing.T) {
 	database := setupTimeoutTestDB(t)
 	repo := db.NewTaskRepo(database)
 
 	// timeout=0 means disabled — should not start goroutine
-	svc := NewPendingTimeoutService(repo, 0, 1*time.Second)
+	svc := NewTimeoutService(repo, nil, 0, 0, 0, 1*time.Second)
 	svc.Start()
 	svc.Stop()
 	// If we get here without panic, disabled mode works
@@ -78,7 +78,7 @@ func TestStop_WaitsForGoroutine(t *testing.T) {
 	database := setupTimeoutTestDB(t)
 	repo := db.NewTaskRepo(database)
 
-	svc := NewPendingTimeoutService(repo, 15, 500*time.Millisecond)
+	svc := NewTimeoutService(repo, nil, 15, 0, 0, 500*time.Millisecond)
 	svc.Start()
 	svc.Stop()
 	// If we get here without panic, Stop() waited for goroutine
@@ -101,7 +101,7 @@ func TestPendingTimeoutService_RunsCheck(t *testing.T) {
 	database.Exec("UPDATE tasks SET created_at = NOW() - interval '20 minutes' WHERE id = $1", "timeout-test-1")
 
 	// Start service with 15 min timeout, 500ms check
-	svc := NewPendingTimeoutService(repo, 15, 500*time.Millisecond)
+	svc := NewTimeoutService(repo, nil, 15, 0, 0, 500*time.Millisecond)
 	svc.Start()
 	defer svc.Stop()
 

@@ -25,6 +25,10 @@ type Config struct {
 	MaxUploadSizeMB        int
 	PendingTimeoutMin      int
 	PendingTimeoutCheckSec int
+	TaskTimeoutMin         int
+	TaskTimeoutCheckSec    int
+	AgentStaleMin          int
+	AgentStaleCheckSec     int
 	AllowedSkills          []string
 	AllowedTags            []string
 }
@@ -49,6 +53,10 @@ func Load() *Config {
 		MaxUploadSizeMB:    getEnvInt("ACB_MAX_UPLOAD_SIZE_MB", 32),
 		PendingTimeoutMin:      getEnvInt("ACB_PENDING_TIMEOUT_MIN", 15),
 		PendingTimeoutCheckSec: getEnvInt("ACB_PENDING_TIMEOUT_CHECK_SEC", 60),
+		TaskTimeoutMin:         getEnvInt("ACB_TASK_TIMEOUT_MIN", 30),
+		TaskTimeoutCheckSec:    getEnvInt("ACB_TASK_TIMEOUT_CHECK_SEC", 60),
+		AgentStaleMin:          getEnvInt("ACB_AGENT_STALE_MIN", 10),
+		AgentStaleCheckSec:     getEnvInt("ACB_AGENT_STALE_CHECK_SEC", 60),
 		AllowedSkills:          getEnvList("ACB_ALLOWED_SKILLS", "coding,review,testing,architecture,devops,security,infra,debugging,documentation,osint,hacking,forensics,go,python,orchestration,dispatch,management"),
 		AllowedTags:            getEnvList("ACB_ALLOWED_TAGS", ""),
 	}

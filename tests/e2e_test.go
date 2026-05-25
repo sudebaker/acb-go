@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -16,7 +17,27 @@ import (
 )
 
 func getTestDSN() string {
-	return "host=localhost port=5433 user=acb password=acb-secure-pg-pass-2026 dbname=acb sslmode=disable"
+	host := os.Getenv("ACB_PG_HOST")
+	if host == "" {
+		host = "localhost"
+	}
+	port := os.Getenv("ACB_PG_PORT")
+	if port == "" {
+		port = "5433"
+	}
+	user := os.Getenv("ACB_PG_USER")
+	if user == "" {
+		user = "acb"
+	}
+	password := os.Getenv("ACB_PG_PASSWORD")
+	if password == "" {
+		password = "acb-secure-pg-pass-2026"
+	}
+	database := os.Getenv("ACB_PG_DATABASE")
+	if database == "" {
+		database = "acb"
+	}
+	return "host=" + host + " port=" + port + " user=" + user + " password=" + password + " dbname=" + database + " sslmode=disable"
 }
 
 func setupE2EDB(t *testing.T) *sql.DB {

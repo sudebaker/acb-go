@@ -50,8 +50,8 @@ func TestTaskEventRepo(t *testing.T) {
 		t.Fatalf("failed to list events: %v", err)
 	}
 
-	if len(events) != 2 {
-		t.Fatalf("expected 2 events, got %d", len(events))
+	if len(events) != 3 {
+		t.Fatalf("expected 3 events (CreateTask + ClaimTask + StartTask), got %d", len(events))
 	}
 
 	// Verify events content - order may vary if timestamps are identical (same second)
@@ -59,8 +59,8 @@ func TestTaskEventRepo(t *testing.T) {
 	for _, e := range events {
 		eventNames[e.Event] = true
 	}
-	if !eventNames["StartTask"] || !eventNames["ClaimTask"] {
-		t.Errorf("expected both StartTask and ClaimTask events, got %v", events)
+	if !eventNames["CreateTask"] || !eventNames["StartTask"] || !eventNames["ClaimTask"] {
+		t.Errorf("expected CreateTask, StartTask and ClaimTask events, got %v", events)
 	}
 
 	// Test non-existent task

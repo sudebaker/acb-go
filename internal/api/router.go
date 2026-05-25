@@ -42,6 +42,18 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 		r.Post("/tasks/{id}/unblock", h.UnblockTask)
 		r.Post("/tasks/{id}/complete", h.CompleteTask)
 		r.Post("/tasks/{id}/fail", h.FailTask)
+		r.Post("/tasks/{id}/heartbeat", h.TaskHeartbeat)
+		r.Get("/tasks/{id}/events", h.ListTaskEvents)
+		r.Get("/tasks/{id}/graph", h.TaskGraph)
+	}
+
+	if taskRepo != nil && agentRepo != nil {
+		staleMin := 10 // default
+		if cfg != nil {
+			staleMin = cfg.AgentStaleMin
+		}
+		dh := NewDashboardHandler(taskRepo, agentRepo, staleMin)
+		r.Get("/dashboard", dh.Dashboard)
 	}
 
 	if rustfsClient != nil && taskRepo != nil {

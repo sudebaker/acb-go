@@ -90,6 +90,16 @@ CREATE INDEX IF NOT EXISTS idx_agents_last_heartbeat ON agents(last_heartbeat);
 CREATE INDEX IF NOT EXISTS idx_agents_token_prefix ON agents(token_prefix);
 `,
 		},
+		{
+			version: 2,
+			sql: `
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS last_heartbeat TIMESTAMP DEFAULT NULL;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS max_retries INT NOT NULL DEFAULT 0;
+ALTER TABLE tasks ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0;
+
+CREATE INDEX IF NOT EXISTS idx_tasks_last_heartbeat ON tasks(last_heartbeat);
+`,
+		},
 	}
 
 	for _, m := range migrations {

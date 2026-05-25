@@ -38,6 +38,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		BodyContext         string   `json:"body_context"`
 		BodyDeliverableFmt  string   `json:"body_deliverable_format"`
 		BodyDeliverablePath string   `json:"body_deliverable_path"`
+		MaxRetries          int      `json:"max_retries"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
@@ -81,6 +82,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		BodyContext:         input.BodyContext,
 		BodyDeliverableFmt:  input.BodyDeliverableFmt,
 		BodyDeliverablePath: input.BodyDeliverablePath,
+		MaxRetries:          input.MaxRetries,
 	}
 
 	if err := h.taskRepo.Create(task); err != nil {
@@ -165,6 +167,19 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	oldStatus := task.Status
+
+	// Validate parent tasks are completed
+	if len(task.Parents) > 0 {
+		parentsDone, err := h.taskRepo.CheckParentsCompleted(id)
+		if err != nil {
+			WriteError(w, 500, "check_parents_failed", err.Error())
+			return
+		}
+		if !parentsDone {
+			WriteError(w, 403, "parents_incomplete", "parent tasks must be completed before claiming")
+			return
+		}
+	}
 
 	// Validate agent has required skills
 	if len(task.RequiredSkills) > 0 {
@@ -443,7 +458,7 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 	}
 	oldStatus := task.Status
 
-	task, err = h.taskRepo.FailTask(id, input.Reason)
+	result, err := h.taskRepo.FailTask(id, input.Reason)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -454,14 +469,86 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, task.Assignee, "", input.Reason, task.RequiredSkills...)
+	go h.pub.PublishTaskEvent(acbredis.EventTaskFailed, id, result.Task.Assignee, "", input.Reason, result.Task.RequiredSkills...)
 
-	// Notify agent of status change
-	if h.dispatcher != nil {
-		go h.dispatcher.NotifyStatusChange(task, oldStatus, "failed", "task_failed")
+	if result.DidRetry {
+		// Auto-retry: notify as retry, then dispatch to matching agents
+		if h.dispatcher != nil {
+			go h.dispatcher.NotifyStatusChange(result.Task, oldStatus, "pending", "task_retried")
+			// Dispatch to new matching agents since assignee was cleared
+			go h.dispatcher.DispatchNewTask(result.Task)
+		}
+		go h.pub.PublishTaskEvent(acbredis.EventNewTask, id, "", "", "", result.Task.RequiredSkills...)
+	} else {
+		// Notify agent of status change
+		if h.dispatcher != nil {
+			go h.dispatcher.NotifyStatusChange(result.Task, oldStatus, "failed", "task_failed")
+		}
 	}
 
-	WriteJSON(w, 200, task)
+	WriteJSON(w, 200, result.Task)
+}
+
+// TaskHeartbeat updates the liveness timestamp for an in-progress task.
+// POST /tasks/{id}/heartbeat
+func (h *TaskHandler) TaskHeartbeat(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	task, err := h.taskRepo.GetByID(id)
+	if err != nil {
+		WriteError(w, 500, "get_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+	if task.Status != "in_progress" && task.Status != "claimed" {
+		WriteError(w, 409, "invalid_status", "heartbeat only allowed for claimed or in_progress tasks")
+		return
+	}
+
+	if err := h.taskRepo.UpdateTaskHeartbeat(id); err != nil {
+		WriteError(w, 500, "heartbeat_failed", err.Error())
+		return
+	}
+
+	WriteJSON(w, 200, map[string]string{"status": "ok"})
+}
+
+// TaskGraph returns a task with its parent and child dependency tree.
+// GET /tasks/{id}/graph
+func (h *TaskHandler) TaskGraph(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	graph, err := h.taskRepo.GetDependencyGraph(id)
+	if err != nil {
+		WriteError(w, 500, "graph_failed", err.Error())
+		return
+	}
+	if graph == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+
+	WriteJSON(w, 200, graph)
+}
+
+// ListTaskEvents returns the event trail for a task.
+// GET /tasks/{id}/events
+func (h *TaskHandler) ListTaskEvents(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+
+	events, err := h.taskRepo.ListTaskEvents(id)
+	if err != nil {
+		WriteError(w, 500, "list_events_failed", err.Error())
+		return
+	}
+	if events == nil {
+		events = []models.TaskEvent{}
+	}
+
+	WriteJSON(w, 200, events)
 }
 
 // DispatchNext returns the best-matching pending task for the requesting agent.

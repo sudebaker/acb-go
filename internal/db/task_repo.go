@@ -81,34 +81,43 @@ func (r *TaskRepo) Create(task *models.Task) error {
 	_, err = r.db.Exec(
 		`INSERT INTO tasks (id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
-			summary, artifacts_json)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)`,
+			summary, artifacts_json, max_retries, retry_count)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
 		task.ID, task.Title, task.Assignee, task.Status, task.Priority,
 		string(parents), string(skills), string(requiredSkills), string(tags),
 		task.BodyGoal, task.BodyContext,
 		task.BodyDeliverableFmt, task.BodyDeliverablePath,
 		task.Summary, string(artifacts),
+		task.MaxRetries, task.RetryCount,
 	)
-	return err
+	if err != nil {
+		return err
+	}
+
+	r.logTaskEvent(task.ID, "CreateTask", task.Assignee, "")
+	return nil
 }
 
 func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	row := r.db.QueryRow(
 		`SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
-			created_at, updated_at, summary, artifacts_json
+			created_at, updated_at, summary, artifacts_json,
+			last_heartbeat, max_retries, retry_count
 		FROM tasks WHERE id = $1`, id,
 	)
 
 	task := &models.Task{}
 	var parents, skills, requiredSkills, tags, artifacts string
 	var createdAt, updatedAt string
+	var lastHeartbeat sql.NullTime
 	err := row.Scan(
 		&task.ID, &task.Title, &task.Assignee, &task.Status, &task.Priority,
 		&parents, &skills, &requiredSkills, &tags,
 		&task.BodyGoal, &task.BodyContext,
 		&task.BodyDeliverableFmt, &task.BodyDeliverablePath,
 		&createdAt, &updatedAt, &task.Summary, &artifacts,
+		&lastHeartbeat, &task.MaxRetries, &task.RetryCount,
 	)
 	if err == sql.ErrNoRows {
 		return nil, nil
@@ -135,6 +144,10 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 		log.Printf("[WARN] GetByID: failed to unmarshal artifacts: %v", err)
 	}
 
+	if lastHeartbeat.Valid {
+		task.LastHeartbeat = &lastHeartbeat.Time
+	}
+
 	if task.Status == "" {
 		task.Status = "pending"
 	}
@@ -142,7 +155,7 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 }
 
 func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]models.Task, error) {
-	query := "SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags, body_goal, body_context, body_deliverable_format, body_deliverable_path, created_at, updated_at, summary, artifacts_json FROM tasks WHERE 1=1"
+	query := "SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags, body_goal, body_context, body_deliverable_format, body_deliverable_path, created_at, updated_at, summary, artifacts_json, last_heartbeat, max_retries, retry_count FROM tasks WHERE 1=1"
 	var args []interface{}
 	paramIdx := 1
 	if status != "" {
@@ -174,11 +187,15 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 		var t models.Task
 		var parents, skills, reqSkills, tags, artifacts string
 		var createdAt, updatedAt sql.NullString
-		if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status, &t.Priority, &parents, &skills, &reqSkills, &tags, &t.BodyGoal, &t.BodyContext, &t.BodyDeliverableFmt, &t.BodyDeliverablePath, &createdAt, &updatedAt, &t.Summary, &artifacts); err != nil {
+		var lastHeartbeat sql.NullTime
+		if err := rows.Scan(&t.ID, &t.Title, &t.Assignee, &t.Status, &t.Priority, &parents, &skills, &reqSkills, &tags, &t.BodyGoal, &t.BodyContext, &t.BodyDeliverableFmt, &t.BodyDeliverablePath, &createdAt, &updatedAt, &t.Summary, &artifacts, &lastHeartbeat, &t.MaxRetries, &t.RetryCount); err != nil {
 			return nil, fmt.Errorf("scan task row: %w", err)
 		}
 		t.CreatedAt = parseTime(createdAt.String)
 		t.UpdatedAt = parseTime(updatedAt.String)
+		if lastHeartbeat.Valid {
+			t.LastHeartbeat = &lastHeartbeat.Time
+		}
 		if err := json.Unmarshal([]byte(parents), &t.Parents); err != nil {
 			log.Printf("[WARN] List: failed to unmarshal parents: %v", err)
 		}
@@ -296,10 +313,28 @@ func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
 
 	r.logTaskEvent(id, "CompleteTask", "", summary)
 
-	return r.GetByID(id)
+	completedTask, err := r.GetByID(id)
+	if err != nil {
+		return nil, fmt.Errorf("get task after complete: %w", err)
+	}
+
+	// Promote children whose parents are now all completed
+	if err := r.PromoteChildren(id); err != nil {
+		log.Printf("[WARN] CompleteTask: promote children for %s: %v", id, err)
+	}
+
+	return completedTask, nil
 }
 
-func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
+// FailTaskResult contains the result of a fail operation.
+type FailTaskResult struct {
+	Task     *models.Task
+	DidRetry bool // true if the task was auto-requeued (retry_count < max_retries)
+	Attempt  int  // current retry attempt (0 if no retry)
+	MaxRetry int  // configured max retries
+}
+
+func (r *TaskRepo) FailTask(id, reason string) (*FailTaskResult, error) {
 	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'", reason, id)
 	if err != nil {
 		return nil, fmt.Errorf("fail task: %w", err)
@@ -316,7 +351,33 @@ func (r *TaskRepo) FailTask(id, reason string) (*models.Task, error) {
 
 	r.logTaskEvent(id, "FailTask", "", reason)
 
-	return r.GetByID(id)
+	// Check for auto-retry
+	task, err := r.GetByID(id)
+	if err != nil {
+		return nil, fmt.Errorf("get task after fail: %w", err)
+	}
+	result := &FailTaskResult{Task: task, MaxRetry: task.MaxRetries}
+
+	if task.MaxRetries > 0 && task.RetryCount < task.MaxRetries {
+		_, err := r.db.Exec(
+			"UPDATE tasks SET status = 'pending', retry_count = retry_count + 1, assignee = '', updated_at = NOW() WHERE id = $1",
+			id,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("fail task retry: %w", err)
+		}
+		r.logTaskEvent(id, "TaskRetry", "", fmt.Sprintf("retry %d/%d: %s", task.RetryCount+1, task.MaxRetries, reason))
+
+		task, err = r.GetByID(id)
+		if err != nil {
+			return nil, fmt.Errorf("get task after retry: %w", err)
+		}
+		result.Task = task
+		result.DidRetry = true
+		result.Attempt = task.RetryCount
+	}
+
+	return result, nil
 }
 
 // ExpirePendingTasks cancels tasks that have been in 'pending' status for longer
@@ -364,6 +425,112 @@ func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
 	}
 
 	return expiredIDs, nil
+}
+
+// ReleaseAgentTasks resets all claimed and in-progress tasks for a given agent
+// back to pending. Used when an agent is detected as stale (no heartbeat).
+func (r *TaskRepo) ReleaseAgentTasks(agentName string) ([]string, error) {
+	rows, err := r.db.Query(
+		`SELECT id FROM tasks WHERE assignee = $1 AND status IN ('claimed', 'in_progress')`,
+		agentName,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query agent tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var released []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			log.Printf("[WARN] ReleaseAgentTasks: scan error: %v", err)
+			continue
+		}
+		released = append(released, id)
+	}
+
+	for _, id := range released {
+		_, err := r.db.Exec(
+			`UPDATE tasks SET status = 'pending', assignee = '', updated_at = NOW() WHERE id = $1`,
+			id,
+		)
+		if err != nil {
+			log.Printf("[ERROR] ReleaseAgentTasks: failed to release task %s: %v", id, err)
+			continue
+		}
+		r.logTaskEvent(id, "StaleAgentRelease", "", fmt.Sprintf("released from stale agent %s", agentName))
+	}
+
+	return released, nil
+}
+
+// UpdateTaskHeartbeat updates the last_heartbeat timestamp for a task.
+func (r *TaskRepo) UpdateTaskHeartbeat(taskID string) error {
+	res, err := r.db.Exec(
+		`UPDATE tasks SET last_heartbeat = NOW(), updated_at = NOW() WHERE id = $1`,
+		taskID,
+	)
+	if err != nil {
+		return fmt.Errorf("update task heartbeat: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("task %s not found", taskID)
+	}
+	return nil
+}
+
+// ExpireStaleInProgressTasks cancels tasks stuck in 'in_progress' whose
+// last_heartbeat is older than timeoutMinutes, or that have no heartbeat
+// set since created_at.
+func (r *TaskRepo) ExpireStaleInProgressTasks(timeoutMinutes int) ([]string, error) {
+	if timeoutMinutes <= 0 {
+		return nil, nil
+	}
+	intervalStr := fmt.Sprintf("%d minutes", timeoutMinutes)
+	rows, err := r.db.Query(
+		`SELECT id, max_retries, retry_count FROM tasks
+		 WHERE status = 'in_progress'
+		 AND (
+		   last_heartbeat IS NOT NULL AND last_heartbeat < NOW() - $1::interval
+		   OR
+		   last_heartbeat IS NULL AND created_at < NOW() - $1::interval
+		 )`,
+		intervalStr,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query stale in-progress tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var staleIDs []string
+	for rows.Next() {
+		var id string
+		var maxRetries, retryCount int
+		if err := rows.Scan(&id, &maxRetries, &retryCount); err != nil {
+			log.Printf("[WARN] ExpireStaleInProgressTasks: scan error: %v", err)
+			continue
+		}
+		staleIDs = append(staleIDs, id)
+	}
+
+	if len(staleIDs) == 0 {
+		return nil, nil
+	}
+
+	for _, id := range staleIDs {
+		_, err := r.db.Exec(
+			`UPDATE tasks SET status = 'failed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'`,
+			fmt.Sprintf("Task timed out after %d minutes without heartbeat", timeoutMinutes), id,
+		)
+		if err != nil {
+			log.Printf("[ERROR] ExpireStaleInProgressTasks: failed to expire task %s: %v", id, err)
+			continue
+		}
+		r.logTaskEvent(id, "TaskHeartbeatTimeout", "", fmt.Sprintf("Task expired after %d minutes without heartbeat", timeoutMinutes))
+	}
+
+	return staleIDs, nil
 }
 
 func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
@@ -452,6 +619,183 @@ func (r *TaskRepo) GetArtifacts(taskID string) ([]models.Artifact, error) {
 
 func (r *TaskRepo) GetPendingByAgent(agent string) ([]models.Task, error) {
 	return r.List("pending", "")
+}
+
+// GetTaskCounts returns the count of tasks per status.
+type TaskCounts struct {
+	Pending     int `json:"pending"`
+	Claimed     int `json:"claimed"`
+	InProgress  int `json:"in_progress"`
+	Blocked     int `json:"blocked"`
+	Completed   int `json:"completed"`
+	Failed      int `json:"failed"`
+	Total       int `json:"total"`
+}
+
+func (r *TaskRepo) GetTaskCounts() (*TaskCounts, error) {
+	counts := &TaskCounts{}
+	rows, err := r.db.Query(
+		`SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status`,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("get task counts: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var status string
+		var cnt int
+		if err := rows.Scan(&status, &cnt); err != nil {
+			return nil, fmt.Errorf("scan count: %w", err)
+		}
+		switch status {
+		case "pending":
+			counts.Pending = cnt
+		case "claimed":
+			counts.Claimed = cnt
+		case "in_progress":
+			counts.InProgress = cnt
+		case "blocked":
+			counts.Blocked = cnt
+		case "completed":
+			counts.Completed = cnt
+		case "failed":
+			counts.Failed = cnt
+		}
+	}
+	counts.Total = counts.Pending + counts.Claimed + counts.InProgress + counts.Blocked + counts.Completed + counts.Failed
+	return counts, rows.Err()
+}
+
+// GetDependencyGraph returns a task with its parent and child tasks.
+type TaskGraph struct {
+	Task     *models.Task   `json:"task"`
+	Parents  []*models.Task `json:"parents"`
+	Children []*models.Task `json:"children"`
+}
+
+func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
+	task, err := r.GetByID(taskID)
+	if err != nil {
+		return nil, err
+	}
+	if task == nil {
+		return nil, nil
+	}
+
+	graph := &TaskGraph{Task: task, Parents: []*models.Task{}, Children: []*models.Task{}}
+
+	for _, parentID := range task.Parents {
+		parent, err := r.GetByID(parentID)
+		if err != nil {
+			log.Printf("[WARN] GetDependencyGraph: parent %s: %v", parentID, err)
+			continue
+		}
+		if parent != nil {
+			graph.Parents = append(graph.Parents, parent)
+		}
+	}
+
+	// Find children (tasks that list this task as a parent)
+	rows, err := r.db.Query(
+		`SELECT id FROM tasks WHERE parents LIKE $1`,
+		fmt.Sprintf("%%%s%%", taskID),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query children: %w", err)
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var childID string
+		if err := rows.Scan(&childID); err != nil {
+			log.Printf("[WARN] GetDependencyGraph: scan child: %v", err)
+			continue
+		}
+		child, err := r.GetByID(childID)
+		if err != nil {
+			log.Printf("[WARN] GetDependencyGraph: get child %s: %v", childID, err)
+			continue
+		}
+		if child != nil {
+			graph.Children = append(graph.Children, child)
+		}
+	}
+
+	return graph, nil
+}
+
+// CheckParentsCompleted returns true if all parent tasks of the given task
+// have status 'completed'. Tasks with no parents return true.
+func (r *TaskRepo) CheckParentsCompleted(taskID string) (bool, error) {
+	task, err := r.GetByID(taskID)
+	if err != nil {
+		return false, fmt.Errorf("get task for parent check: %w", err)
+	}
+	if task == nil {
+		return false, fmt.Errorf("task %s not found", taskID)
+	}
+	if len(task.Parents) == 0 {
+		return true, nil
+	}
+
+	for _, parentID := range task.Parents {
+		var status string
+		err := r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", parentID).Scan(&status)
+		if err != nil {
+			return false, fmt.Errorf("check parent %s: %w", parentID, err)
+		}
+		if status != "completed" {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+// PromoteChildren evaluates all tasks that list the given task as a parent.
+// Children whose all parents are now completed remain in pending (already claimable).
+// This is called after a task is completed.
+func (r *TaskRepo) PromoteChildren(taskID string) error {
+	rows, err := r.db.Query(
+		`SELECT id FROM tasks WHERE parents LIKE $1 AND status = 'pending'`,
+		fmt.Sprintf("%%%s%%", taskID),
+	)
+	if err != nil {
+		return fmt.Errorf("query children for promotion: %w", err)
+	}
+	defer rows.Close()
+
+	var childIDs []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			log.Printf("[WARN] PromoteChildren: scan error: %v", err)
+			continue
+		}
+		childIDs = append(childIDs, id)
+	}
+
+	for _, childID := range childIDs {
+		// Verify all parents are completed before promoting
+		allDone, err := r.CheckParentsCompleted(childID)
+		if err != nil {
+			log.Printf("[WARN] PromoteChildren: check parents for %s: %v", childID, err)
+			continue
+		}
+		if allDone {
+			r.logTaskEvent(childID, "ParentsCompleted", "", fmt.Sprintf("parent %s completed", taskID))
+		}
+	}
+
+	return nil
+}
+
+// ListTaskEvents returns the event trail for a task.
+func (r *TaskRepo) ListTaskEvents(taskID string) ([]models.TaskEvent, error) {
+	if r.eventRepo == nil {
+		return nil, fmt.Errorf("event repo not initialized")
+	}
+	return r.eventRepo.ListByTask(taskID)
 }
 
 // logTaskEvent registers an event for a task transition

@@ -58,10 +58,14 @@ func main() {
 	disp.Start()
 	defer disp.Stop()
 
-	// Pending task timeout: cancels tasks that stay in 'pending' too long
-	timeoutSvc := timeout.NewPendingTimeoutService(
+	// Timeout service: cancels stale pending tasks, in-progress tasks with no heartbeat,
+	// and releases tasks from agents that stopped heartbeating.
+	timeoutSvc := timeout.NewTimeoutService(
 		taskRepo,
+		agentRepo,
 		cfg.PendingTimeoutMin,
+		cfg.TaskTimeoutMin,
+		cfg.AgentStaleMin,
 		time.Duration(cfg.PendingTimeoutCheckSec)*time.Second,
 	)
 	timeoutSvc.Start()

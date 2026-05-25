@@ -357,6 +357,47 @@ func TestUnblockTask_200(t *testing.T) {
 	}
 }
 
+func TestListTaskEvents_200(t *testing.T) {
+	_, r := setupRouter(t)
+	req := authRequest("POST", "/tasks", `{"id":"t-events-1","title":"event test task"}`)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 201 {
+		t.Fatalf("create task: expected 201, got %d", w.Code)
+	}
+
+	req = authRequest("GET", "/tasks/t-events-1/events", "")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("list events: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var events []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&events); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected at least one event (CreateTask)")
+	}
+	// Most recent event first (ORDER BY timestamp DESC)
+	if events[0]["event"] != "CreateTask" {
+		t.Errorf("expected event 'CreateTask', got %v", events[0]["event"])
+	}
+}
+
+func TestListTaskEvents_EmptyForNonexistent(t *testing.T) {
+	_, r := setupRouter(t)
+	req := authRequest("GET", "/tasks/nonexistent/events", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200 for non-existent task events, got %d", w.Code)
+	}
+}
+
 func TestDispatchNext_MatchingTask(t *testing.T) {
 	d := setupTestDB(t)
 	taskRepo := db.NewTaskRepo(d)
