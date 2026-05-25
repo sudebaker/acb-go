@@ -22,19 +22,30 @@ Before an agent can interact with the ACB, it must be registered. This is typica
 
 **SQL (direct setup):**
 ```sql
-INSERT INTO agents (name, port, token) VALUES ('agent-alpha', 8081, 'your-secret-token');
+INSERT INTO agents (name, port, token, skills) VALUES ('agent-alpha', 8081, 'your-secret-token', '["python","linux","docker"]');
 ```
 
 **Via repository (Go code):**
 ```go
 agentRepo.UpsertAgent(&models.Agent{
-    Name:  "agent-alpha",
-    Port:  8081,
-    Token: "your-secret-token",
+    Name:   "agent-alpha",
+    Port:   8081,
+    Token:  "your-secret-token",
+    Skills: []string{"python", "linux", "docker"},
 })
 ```
 
-Each agent must have a unique token. The token is used for Bearer authentication on every request.
+Each agent must have a unique token. The token is used for Bearer authentication on every request. The `skills` field is configured at deployment time by the operator — the agent does not declare its own skills. The ACB validates these skills when the agent attempts to claim a task.
+
+**Skills catalog:** The ACB enforces a fixed catalog of allowed skills via the `ACB_ALLOWED_SKILLS` env var (comma-separated). At registration, skills not in the catalog are rejected with `400`:
+
+```json
+{"error": "invalid_skills", "message": "invalid agent skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
+```
+
+If `ACB_ALLOWED_SKILLS` is not configured, all skills are accepted.
+
+**Pending task timeout:** Tasks that remain in `pending` state without being claimed automatically expire after `ACB_PENDING_TIMEOUT_MIN` minutes (default: 15). The task transitions to `failed` with reason `"expired: pending timeout"`. Agents should handle this gracefully — if a dispatch/claim arrives after expiration, it will return `409`.
 
 ---
 
@@ -96,11 +107,11 @@ The standard task lifecycle for an agent:
 
 #### 3.1 Poll for Tasks
 ```http
-GET /tasks?status=pending&assignee=agent-alpha
+GET /tasks?status=pending&required_skills=python,linux
 Authorization: Bearer your-secret-token
 ```
 
-Returns pending tasks assigned to your agent. If the `assignee` field was set at creation, the task will appear in filtered results.
+Returns pending tasks. Agents should filter by their own capabilities to find relevant work.
 
 #### 3.2 Claim
 ```http
@@ -111,7 +122,7 @@ Content-Type: application/json
 {"assignee": "agent-alpha"}
 ```
 
-Only tasks in `pending` state can be claimed. Returns `409` if already claimed.
+Only tasks in `pending` state can be claimed. The ACB validates that the authenticated agent has **all** the skills listed in `required_skills`. Returns `403` if the agent lacks the necessary skills, or `409` if already claimed by another agent.
 
 #### 3.3 Start
 ```http
@@ -200,11 +211,18 @@ The agent should listen for Redis events (see section 6) or poll `GET /tasks/:id
 
 Agents can subscribe to Redis channels to receive real-time notifications instead of polling.
 
-**Channel format:** `agent:<agent_name>`
+**Channel formats:**
+
+| Channel | Purpose |
+|---------|---------|
+| `agent:<agent_name>` | Direct notifications for a specific agent |
+| `tasks:pending` | Broadcast of all new tasks |
+
+**Recommended subscription:** Subscribe to `agent:<agent_name>` for direct notifications, plus `tasks:pending` to discover new work.
 
 Example subscription (Redis CLI):
 ```bash
-SUBSCRIBE "agent:agent-alpha"
+SUBSCRIBE "agent:agent-alpha" "tasks:pending"
 ```
 
 **Events relevant to agents:**
@@ -216,7 +234,7 @@ SUBSCRIBE "agent:agent-alpha"
 
 **Event payload example:**
 ```json
-{"event":"new_task","task_id":"t_123","agent":"agent-alpha"}
+{"event":"new_task","task_id":"t_123","required_skills":["python","linux"],"agent":"agent-alpha"}
 ```
 
 Events are fire-and-forget — the ACB does not retry on Redis failures. Agents should handle missed events gracefully (e.g., periodic polling as fallback).
@@ -240,6 +258,7 @@ for msg := range ch {
 |-------------|---------|----------|
 | `400` | Malformed request | Fix request body |
 | `401` | Invalid/missing token | Check Bearer token |
+| `403` | Insufficient skills | Agent lacks required skills for this task |
 | `404` | Resource not found | Check task/agent ID |
 | `409` | State conflict | Check current task state and retry with valid transition |
 | `429` | Rate limited | Wait and retry with exponential backoff |

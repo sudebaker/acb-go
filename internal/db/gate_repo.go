@@ -21,7 +21,7 @@ func (r *GateRepo) CreateGate(gate *models.Gate) error {
 	}
 	_, err := r.db.Exec(
 		`INSERT INTO gates (gate_id, task_id, question, ask, status, answer)
-		VALUES (?, ?, ?, ?, ?, ?)`,
+		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		gate.GateID, gate.TaskID, gate.Question, gate.Ask, gate.Status, gate.Answer,
 	)
 	return err
@@ -29,8 +29,9 @@ func (r *GateRepo) CreateGate(gate *models.Gate) error {
 
 func (r *GateRepo) GetByTaskID(taskID string) ([]models.Gate, error) {
 	rows, err := r.db.Query(
-		`SELECT gate_id, task_id, question, ask, status, answer
-		FROM gates WHERE task_id = ?`, taskID,
+		`SELECT gate_id, task_id, question, ask, status, answer, created_at, answered_at
+		 FROM gates WHERE task_id = $1`,
+		taskID,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("get gates by task: %w", err)
@@ -40,8 +41,13 @@ func (r *GateRepo) GetByTaskID(taskID string) ([]models.Gate, error) {
 	var gates []models.Gate
 	for rows.Next() {
 		var g models.Gate
-		if err := rows.Scan(&g.GateID, &g.TaskID, &g.Question, &g.Ask, &g.Status, &g.Answer); err != nil {
+		var answeredAt sql.NullTime
+
+		if err := rows.Scan(&g.GateID, &g.TaskID, &g.Question, &g.Ask, &g.Status, &g.Answer, &g.CreatedAt, &answeredAt); err != nil {
 			return nil, fmt.Errorf("scan gate: %w", err)
+		}
+		if answeredAt.Valid {
+			g.AnsweredAt = &answeredAt.Time
 		}
 		gates = append(gates, g)
 	}
@@ -50,7 +56,7 @@ func (r *GateRepo) GetByTaskID(taskID string) ([]models.Gate, error) {
 
 func (r *GateRepo) AnswerGate(gateID, answer string) error {
 	res, err := r.db.Exec(
-		`UPDATE gates SET status = 'answered', answer = ? WHERE gate_id = ? AND status = 'asked'`,
+		`UPDATE gates SET status = 'answered', answer = $1, answered_at = NOW() WHERE gate_id = $2 AND status = 'asked'`,
 		answer, gateID,
 	)
 	if err != nil {
@@ -65,7 +71,7 @@ func (r *GateRepo) AnswerGate(gateID, answer string) error {
 
 func (r *GateRepo) ResolveGate(gateID string) error {
 	res, err := r.db.Exec(
-		`UPDATE gates SET status = 'resolved' WHERE gate_id = ? AND status = 'answered'`,
+		`UPDATE gates SET status = 'resolved' WHERE gate_id = $1 AND status = 'answered'`,
 		gateID,
 	)
 	if err != nil {

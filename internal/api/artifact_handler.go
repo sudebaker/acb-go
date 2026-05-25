@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
 	"github.com/sudebaker/acb-go/internal/rustfs"
@@ -17,6 +18,7 @@ import (
 type ArtifactHandler struct {
 	taskRepo *db.TaskRepo
 	rustfs   *rustfs.Client
+	cfg      *config.Config
 }
 
 func (h *ArtifactHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
@@ -32,7 +34,7 @@ func (h *ArtifactHandler) UploadArtifact(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := r.ParseMultipartForm(32 << 20); err != nil {
+	if err := r.ParseMultipartForm(int64(h.cfg.MaxUploadSizeMB) << 20); err != nil {
 		WriteError(w, 400, "invalid_form", "failed to parse multipart form")
 		return
 	}
@@ -197,4 +199,47 @@ func (h *ArtifactHandler) DeleteArtifact(w http.ResponseWriter, r *http.Request)
 	}
 
 	w.WriteHeader(204)
+}
+
+func (h *ArtifactHandler) CleanupArtifacts(w http.ResponseWriter, r *http.Request) {
+	taskID := chi.URLParam(r, "id")
+
+	task, err := h.taskRepo.GetByID(taskID)
+	if err != nil {
+		WriteError(w, 500, "get_failed", err.Error())
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+
+	// Check if RustFS is enabled
+	if !h.rustfs.Enabled() {
+		WriteError(w, 503, "rustfs_disabled", "RustFS storage not configured")
+		return
+	}
+
+	// List all artifacts for this task
+	objects, err := h.rustfs.ListObjects(r.Context(), taskID+"/")
+	if err != nil {
+		WriteError(w, 500, "list_failed", err.Error())
+		return
+	}
+
+	// Delete each object
+	for _, key := range objects {
+		if err := h.rustfs.Delete(r.Context(), key); err != nil {
+			WriteError(w, 500, "delete_failed", err.Error())
+			return
+		}
+	}
+
+	// Clear artifacts in DB
+	if err := h.taskRepo.SetArtifactsJSON(taskID, "[]"); err != nil {
+		WriteError(w, 500, "clear_artifacts_failed", err.Error())
+		return
+	}
+
+	w.WriteHeader(200)
 }

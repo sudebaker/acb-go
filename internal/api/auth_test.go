@@ -9,7 +9,7 @@ import (
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
 	"github.com/go-chi/chi/v5"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func authTestRouter(t *testing.T) (*sql.DB, http.Handler) {

@@ -41,6 +41,16 @@ pending ──→ claimed ──→ in_progress ──→ completed
 
 Valid transitions are enforced server-side. Invalid transitions return `409 Conflict`.
 
+### Pending Task Timeout
+
+Unclaimed tasks in `pending` state are automatically expired after a configurable timeout. When a task exceeds the timeout, its status transitions to `failed` with reason `"expired: pending timeout"`.
+
+**Configuration:**
+- `ACB_PENDING_TIMEOUT_MIN` — timeout in minutes (default: `15`)
+- `ACB_PENDING_TIMEOUT_CHECK_SEC` — check interval in seconds (default: `60`)
+
+A background goroutine runs at the configured interval, scanning for `pending` tasks older than the timeout and transitioning them to `failed`.
+
 ---
 
 ### `POST /tasks`
@@ -49,36 +59,45 @@ Create a new task.
 
 **Auth:** Bearer token required
 
+**Skills validation:** If `ACB_ALLOWED_SKILLS` is configured, each skill in `required_skills` must be in the allowed list. Tasks with invalid skills receive `400`:
+
+```json
+{"error": "invalid_skills", "message": "invalid skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
+```
+
+If `ACB_ALLOWED_SKILLS` is not set (empty), all skills are accepted.
+
 **Request body:**
 ```json
 {
   "id": "t_a1b2c3d4",
   "title": "Analyze log files",
-  "assignee": "agent-alpha",
+  "required_skills": ["python", "linux"],
   "priority": 3,
+  "tags": ["security", "urgent"],
   "parents": ["t_prev_001"],
   "body_goal": "Find anomalies in the access log",
   "body_context": "Logs are in /var/log/access.log",
-  "body_deliverable_format": "markdown",
-  "body_deliverable_path": "/reports/anomalies.md"
+  "body_deliverable_format": "markdown"
 }
 ```
 
-All fields except `id` and `title` are optional. Default status: `pending`.
+All fields except `id` and `title` are optional. `assignee` is omitted at creation — agents self-assign via `claim`. Default status: `pending`.
 
 **Response `201`:**
 ```json
 {
   "id": "t_a1b2c3d4",
   "title": "Analyze log files",
-  "assignee": "agent-alpha",
+  "assignee": null,
+  "required_skills": ["python", "linux"],
   "status": "pending",
   "priority": 3,
+  "tags": ["security", "urgent"],
   "parents": ["t_prev_001"],
   "body_goal": "Find anomalies in the access log",
   "body_context": "Logs are in /var/log/access.log",
   "body_deliverable_format": "markdown",
-  "body_deliverable_path": "/reports/anomalies.md",
   "created_at": "2025-01-15T10:30:00Z",
   "summary": "",
   "artifacts": []
@@ -98,7 +117,7 @@ List tasks with optional filters.
 
 **Auth:** Bearer token required
 
-**Query parameters:** `?status=pending&assignee=agent-alpha`
+**Query parameters:** `?status=pending` or `?status=pending&required_skills=python,linux`
 
 **Response `200`:**
 ```json
@@ -113,6 +132,27 @@ List tasks with optional filters.
 ```
 
 Returns empty array `[]` when no tasks match.
+
+---
+
+### `GET /tasks/dispatch`
+
+Get the next best-matching pending task for an agent. Smart polling endpoint for agents without webhook capability.
+
+**Auth:** Bearer token required
+
+**Query parameters:** `?agent=<name>`
+
+Returns the highest-priority pending task whose `required_skills` are a subset of the agent's skills. Marks the task as `dispatched` to prevent duplicate assignment.
+
+**Response `200`:** Full task object (same as GET /tasks/:id)
+
+**Response `204`:** No matching tasks available
+
+**Response `400`:**
+```json
+{"error": "missing_agent", "message": "agent query parameter is required"}
+```
 
 ---
 
@@ -133,7 +173,7 @@ Get a single task by ID.
 
 ### `POST /tasks/:id/claim`
 
-Claim a pending task for an agent.
+Claim a pending task for an agent. The ACB validates that the authenticated agent has **all** the skills listed in `required_skills`.
 
 **Auth:** Bearer token required
 
@@ -145,6 +185,11 @@ Claim a pending task for an agent.
 **Response `200`:**
 ```json
 {"id": "t_a1b2c3d4", "status": "claimed", "assignee": "agent-alpha"}
+```
+
+**Response `403`:**
+```json
+{"error": "insufficient_skills", "message": "agent lacks required skills for task t_a1b2c3d4"}
 ```
 
 **Response `409`:**
@@ -264,6 +309,49 @@ Mark a task as failed with a reason. Only allowed from `in_progress`.
 ---
 
 ## Agents
+
+### `POST /agents`
+
+Register or update an agent with webhook URL for task dispatch.
+
+**Auth:** Bearer token required. Agents can only register themselves (X-Agent-Name must match).
+
+**Skills validation:** If `ACB_ALLOWED_SKILLS` is configured, each skill in the agent's `skills` array must be in the allowed list. Registration with invalid skills receives `400`:
+
+```json
+{"error": "invalid_skills", "message": "invalid agent skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
+```
+
+**Request body:**
+```json
+{
+  "name": "agent-2",
+  "port": 8645,
+  "token": "<AGENT_TOKEN>",
+  "skills": ["go", "testing", "devops"],
+  "webhook_url": "http://localhost:8645/webhooks/orchestrator",
+  "webhook_secret": "<WEBHOOK_SECRET>"
+}
+```
+
+**Security:** Webhook URLs are validated at registration:
+- Must use `http://` or `https://` scheme
+- Resolved IPs are checked against private ranges (RFC 1918, loopback, link-local)
+- Prevents SSRF attacks via internal network access
+
+**Response `200`:** Agent object (token redacted)
+
+**Response `403`:**
+```json
+{"error": "forbidden", "message": "agent can only register itself"}
+```
+
+**Response `400`:**
+```json
+{"error": "invalid_webhook_url", "message": "webhook URL rejected: resolves to private IP"}
+```
+
+---
 
 ### `POST /agents/heartbeat`
 
@@ -412,7 +500,12 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 | `empty_file` | 400 | Uploaded file is empty |
 | `missing_key` | 400 | Key query parameter required |
 | `invalid_form` | 400 | Malformed multipart form |
+| `invalid_webhook_url` | 400 | Webhook URL validation failed (SSRF, invalid scheme) |
+| `ssrf_blocked` | 400 | Webhook URL resolves to private/blocked IP |
+| `forbidden` | 403 | Agent attempted to register with a different name |
+| `dispatch_failed` | 500 | Webhook dispatch to agent failed (logged, retried) |
 | `unauthorized` | 401 | Missing or invalid Bearer token |
+| `insufficient_skills` | 403 | Agent lacks required skills for task |
 | `not_found` | 404 | Resource not found |
 | `claim_failed` | 409 | Task cannot be claimed |
 | `start_failed` | 409 | Task cannot be started |
@@ -436,13 +529,64 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 
 ---
 
+## Webhook Dispatch
+
+When a task is created, ACB automatically dispatches it to matching agents via their `webhook_url`.
+
+### Flow
+
+```
+Task Created → Match agents by required_skills → POST to each agent's webhook_url
+              ↓ (if webhook fails)                ↓ (success)
+         Queue in Redis for retry          Agent receives task notification
+              ↓ (goroutine, exponential backoff)
+         Retry up to 5 times (5s, 25s, 125s)
+              ↓ (all retries exhausted)
+         Mark as dispatch_failed (agent can still poll)
+```
+
+### Webhook Payload
+
+```json
+{
+  "action": "new_task",
+  "task": {
+    "id": "...",
+    "title": "...",
+    "required_skills": ["go"],
+    "body_goal": "..."
+  },
+  "timestamp": "2026-05-16T21:00:00Z"
+}
+```
+
+### Signature Verification
+
+Each webhook POST includes two headers:
+- `X-Webhook-Signature`: HMAC-SHA256(webhook_secret, timestamp + "." + body) as hex
+- `X-Webhook-Timestamp`: Unix timestamp of the dispatch
+
+Receivers should:
+1. Reject if `|current_time - timestamp| > 5 minutes` (replay protection)
+2. Recompute HMAC: `SHA256(secret, timestamp + "." + body)` and compare with `X-Webhook-Signature`
+
+### Agent Registration for Dispatch
+
+Agents must register with a `webhook_url` and `webhook_secret` via `POST /agents`. See the Agents section above.
+
+---
+
 ## Redis Events
 
-Published on channel `agent:<agent_name>` after each state transition.
+Published on the following channels depending on the event type:
+
+- `agent:<agent_name>` — targeted to the involved agent
+- `tasks:pending` — broadcast of new pending tasks
+- `tasks:gates` — broadcast of blocked tasks requiring human intervention
 
 | Event | Trigger | Payload |
 |-------|---------|---------|
-| `new_task` | Task created | `{"event":"new_task","task_id":"t_123","agent":"agent-alpha"}` |
+| `new_task` | Task created | `{"event":"new_task","task_id":"t_123","required_skills":["python","linux"],"agent":"agent-alpha"}` |
 | `task_claimed` | Task claimed | `{"event":"task_claimed","task_id":"t_123","agent":"agent-alpha"}` |
 | `task_started` | Task started | `{"event":"task_started","task_id":"t_123"}` |
 | `task_blocked` | Task blocked | `{"event":"task_blocked","task_id":"t_123"}` |
@@ -457,25 +601,35 @@ Events are fire-and-forget via goroutines. Redis publish errors are logged but n
 ## cURL Examples
 
 ```bash
-# Create a task
-curl -s -X POST http://localhost:8080/tasks \
+# Create a task with skill requirements
+curl -s -X POST http://localhost:8090/tasks \
   -H "Authorization: Bearer test-token" \
   -H "Content-Type: application/json" \
-  -d '{"id":"t001","title":"test","priority":3}'
+  -d '{"id":"t001","title":"test","required_skills":["python","linux"],"priority":3}'
 
 # Claim a task
-curl -s -X POST http://localhost:8080/tasks/t001/claim \
+curl -s -X POST http://localhost:8090/tasks/t001/claim \
   -H "Authorization: Bearer test-token" \
   -H "Content-Type: application/json" \
   -d '{"assignee":"agent-alpha"}'
 
 # Send heartbeat
-curl -s -X POST http://localhost:8080/agents/heartbeat \
+curl -s -X POST http://localhost:8090/agents/heartbeat \
   -H "Authorization: Bearer test-token" \
   -H "Content-Type: application/json" \
   -d '{"name":"agent-alpha"}'
 
-# List pending tasks
-curl -s "http://localhost:8080/tasks?status=pending&assignee=agent-alpha" \
+# List pending tasks matching agent skills
+curl -s "http://localhost:8090/tasks?status=pending" \
   -H "Authorization: Bearer test-token"
+
+# Register an agent with webhook URL
+curl -s -X POST http://localhost:8090/agents \
+  -H "Authorization: Bearer <AGENT_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"agent-2","port":8645,"token":"<AGENT_TOKEN>","skills":["go","testing"],"webhook_url":"http://localhost:8645/webhooks/orchestrator","webhook_secret":"<WEBHOOK_SECRET>"}'
+
+# Get next matching task for polling
+curl -s "http://localhost:8090/tasks/dispatch?agent=agent-2" \
+  -H "Authorization: Bearer <AGENT_TOKEN>"
 ```

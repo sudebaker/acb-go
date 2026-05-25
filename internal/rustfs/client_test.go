@@ -66,6 +66,18 @@ func (s *memoryStore) MakeBucket(_ context.Context) error {
 	return nil
 }
 
+func (s *memoryStore) ListObjects(_ context.Context, prefix string) ([]string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var keys []string
+	for key := range s.data {
+		if strings.HasPrefix(key, prefix) {
+			keys = append(keys, key)
+		}
+	}
+	return keys, nil
+}
+
 func TestNilClient_UploadNoop(t *testing.T) {
 	c := &Client{enabled: false}
 	if err := c.Upload(context.Background(), "k", strings.NewReader("x"), 1, "text/plain"); err != nil {
@@ -180,5 +192,46 @@ func TestClient_Exists(t *testing.T) {
 	}
 	if !exists {
 		t.Error("expected true for existing key")
+	}
+}
+
+func TestClient_ListObjects(t *testing.T) {
+	s := newMemoryStore()
+	c := &Client{store: s, bucket: "test-bucket", enabled: true}
+
+	c.Upload(context.Background(), "task1/a.txt", strings.NewReader("hello"), 5, "text/plain")
+	c.Upload(context.Background(), "task1/b.txt", strings.NewReader("world"), 5, "text/plain")
+	c.Upload(context.Background(), "task2/c.txt", strings.NewReader("other"), 5, "text/plain")
+
+	keys, err := c.ListObjects(context.Background(), "task1/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 2 {
+		t.Errorf("expected 2 objects, got %d", len(keys))
+	}
+
+	keys, err = c.ListObjects(context.Background(), "task2/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 1 {
+		t.Errorf("expected 1 object, got %d", len(keys))
+	}
+
+	keys, err = c.ListObjects(context.Background(), "nonexistent/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keys) != 0 {
+		t.Errorf("expected 0 objects, got %d", len(keys))
+	}
+}
+
+func TestNilClient_ListObjects(t *testing.T) {
+	c := &Client{enabled: false}
+	_, err := c.ListObjects(context.Background(), "prefix/")
+	if err == nil {
+		t.Error("expected error for disabled client")
 	}
 }

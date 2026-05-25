@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -10,21 +11,60 @@ import (
 
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
-	_ "github.com/mattn/go-sqlite3"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const testToken = "test-token"
 
+func getTestDSN() string {
+	return dbTestDSN()
+}
+
 func setupTestDB(t *testing.T) *sql.DB {
 	t.Helper()
-	d, err := sql.Open("sqlite3", t.TempDir()+"/test.db")
+	dsn := getTestDSN()
+	d, err := sql.Open("pgx", dsn)
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := d.Ping(); err != nil {
+		t.Fatal(err)
+	}
+	// Clean all tables before each test for isolation
+	apiCleanTables(t, d)
 	if err := db.RunMigrations(d); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() {
+		apiCleanTables(t, d)
+		d.Close()
+	})
 	return d
+}
+
+func apiCleanTables(t *testing.T, d *sql.DB) {
+	t.Helper()
+	tables := []string{"task_events", "gates", "agents", "tasks"}
+	for _, table := range tables {
+		_, err := d.Exec(fmt.Sprintf(`
+			DO $$
+			BEGIN
+				DELETE FROM %s;
+			EXCEPTION WHEN undefined_table THEN NULL;
+			END $$;
+		`, table))
+		if err != nil {
+			// Table may not exist yet (first run before migrations)
+			t.Logf("apiCleanTables: could not clean %s: %v", table, err)
+		}
+	}
+	_, _ = d.Exec(`
+		DO $$
+		BEGIN
+			DELETE FROM schema_version;
+		EXCEPTION WHEN undefined_table THEN NULL;
+		END $$;
+	`)
 }
 
 func setupRouter(t *testing.T) (*sql.DB, http.Handler) {
@@ -34,7 +74,7 @@ func setupRouter(t *testing.T) (*sql.DB, http.Handler) {
 	gateRepo := db.NewGateRepo(d)
 	agentRepo := db.NewAgentRepo(d)
 	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
 	return d, r
 }
 
@@ -59,6 +99,26 @@ func TestCreateTask_201(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 	if resp["status"] != "pending" {
 		t.Errorf("expected status pending, got %v", resp["status"])
+	}
+}
+
+func TestCreateTask_WithSkills_201(t *testing.T) {
+	_, r := setupRouter(t)
+	req := authRequest("POST", "/tasks", `{"id":"t002","title":"skill test","skills":["python","go"],"required_skills":["python"],"tags":["api","web"]}`)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 201 {
+		t.Errorf("expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+
+	// Verify skills are preserved
+	skills, _ := resp["skills"].([]interface{})
+	if len(skills) != 2 {
+		t.Errorf("expected 2 skills, got %d", len(skills))
 	}
 }
 
@@ -116,6 +176,28 @@ func TestListTasks_200(t *testing.T) {
 	json.NewDecoder(w.Body).Decode(&resp)
 	if len(resp) != 2 {
 		t.Errorf("expected 2 tasks, got %d", len(resp))
+	}
+}
+
+func TestListTasks_FilteredByRequiredSkills_200(t *testing.T) {
+	d, r := setupRouter(t)
+	taskRepo := db.NewTaskRepo(d)
+	// Create task with required skills
+	taskRepo.Create(&models.Task{ID: "t001", Title: "python task", RequiredSkills: []string{"python"}})
+	taskRepo.Create(&models.Task{ID: "t002", Title: "java task", RequiredSkills: []string{"java"}})
+
+	req := authRequest("GET", "/tasks?required_skills=python", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d", w.Code)
+	}
+
+	var resp []map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if len(resp) != 1 || resp[0]["id"] != "t001" {
+		t.Errorf("expected 1 task with id t001, got %v", resp)
 	}
 }
 
@@ -263,7 +345,7 @@ func TestUnblockTask_200(t *testing.T) {
 	taskRepo.StartTask("t001")
 	taskRepo.UpdateStatus("t001", "blocked")
 	gateRepo.CreateGate(&models.Gate{GateID: "g001", TaskID: "t001", Question: "Q?"})
-	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = 'g001'")
+	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "g001")
 	gateRepo.AnswerGate("g001", "yes")
 
 	req := authRequest("POST", "/tasks/t001/unblock", `{"gate_id":"g001"}`)
@@ -272,5 +354,87 @@ func TestUnblockTask_200(t *testing.T) {
 
 	if w.Code != 200 {
 		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDispatchNext_MatchingTask(t *testing.T) {
+	d := setupTestDB(t)
+	taskRepo := db.NewTaskRepo(d)
+	agentRepo := db.NewAgentRepo(d)
+	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken, Skills: []string{"go", "testing"}})
+	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+
+	// Create a task matching the agent's skills
+	taskRepo.Create(&models.Task{ID: "dispatch-1", Title: "go task", RequiredSkills: []string{"go"}, Priority: 5})
+
+	req := httptest.NewRequest("GET", "/tasks/dispatch?agent=test-agent", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["id"] != "dispatch-1" {
+		t.Errorf("expected task id 'dispatch-1', got %v", resp["id"])
+	}
+}
+
+func TestDispatchNext_NoMatchingTask(t *testing.T) {
+	d := setupTestDB(t)
+	taskRepo := db.NewTaskRepo(d)
+	agentRepo := db.NewAgentRepo(d)
+	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken, Skills: []string{"python"}})
+	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+
+	// Create a task requiring "rust" — agent doesn't have it
+	taskRepo.Create(&models.Task{ID: "dispatch-2", Title: "rust task", RequiredSkills: []string{"rust"}})
+
+	req := httptest.NewRequest("GET", "/tasks/dispatch?agent=test-agent", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 204 {
+		t.Errorf("expected 204 No Content, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDispatchNext_NoPendingTasks(t *testing.T) {
+	d := setupTestDB(t)
+	agentRepo := db.NewAgentRepo(d)
+	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken, Skills: []string{"go"}})
+	r := NewRouter(db.NewTaskRepo(d), db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+
+	// No tasks created at all — should return 204
+	req := httptest.NewRequest("GET", "/tasks/dispatch?agent=test-agent", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 204 {
+		t.Errorf("expected 204 No Content, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestDispatchNext_UnknownAgent(t *testing.T) {
+	d := setupTestDB(t)
+	taskRepo := db.NewTaskRepo(d)
+	agentRepo := db.NewAgentRepo(d)
+	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
+	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+
+	taskRepo.Create(&models.Task{ID: "dispatch-3", Title: "task"})
+
+	req := httptest.NewRequest("GET", "/tasks/dispatch?agent=unknown-agent", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	// Unknown agent: the dispatcher function returns nil task → 204
+	if w.Code != 204 {
+		t.Errorf("expected 204, got %d: %s", w.Code, w.Body.String())
 	}
 }

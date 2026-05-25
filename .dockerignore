@@ -1,0 +1,12 @@
+.git
+.gitignore
+.env
+*.test
+tests/
+coverage.*
+*.coverprofile
+profile.cov
+.vscode/
+.idea/
+*.md
+LICENSE
