@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 )
 
@@ -18,6 +19,14 @@ type ErrorResponse struct {
 
 func WriteError(w http.ResponseWriter, status int, code, message string) {
 	WriteJSON(w, status, ErrorResponse{Error: code, Message: message})
+}
+
+// WriteErrorSafe logs the error and returns a generic message to the client.
+func WriteErrorSafe(w http.ResponseWriter, status int, code string, err error) {
+	if err != nil {
+		log.Printf("[ERROR] %s: %v", code, err)
+	}
+	WriteError(w, status, code, "internal server error")
 }
 
 type ConflictResponse struct {

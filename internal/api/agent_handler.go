@@ -40,7 +40,7 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.agentRepo.UpdateHeartbeat(input.Name); err != nil {
-		WriteError(w, 404, "agent_not_found", err.Error())
+		WriteErrorSafe(w, 404, "agent_not_found", err)
 		return
 	}
 
@@ -52,7 +52,7 @@ func (h *AgentHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 
 	agent, err := h.agentRepo.GetByName(name)
 	if err != nil {
-		WriteError(w, 500, "get_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_failed", err)
 		return
 	}
 	if agent == nil {
@@ -124,7 +124,7 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 	agent := &models.Agent{Name: input.Name, Port: input.Port, Token: input.Token, Skills: input.Skills, WebhookURL: input.WebhookURL, WebhookSecret: input.WebhookSecret}
 
 	if err := h.agentRepo.UpsertAgent(agent); err != nil {
-		WriteError(w, 500, "upsert_failed", err.Error())
+		WriteErrorSafe(w, 500, "upsert_failed", err)
 		return
 	}
 

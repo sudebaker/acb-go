@@ -115,7 +115,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_last_heartbeat ON tasks(last_heartbeat);
 			tx.Rollback()
 			return err
 		}
-		if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES ($1)`, m.version); err != nil {
+		if _, err := tx.Exec(`INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT DO NOTHING`, m.version); err != nil {
 			tx.Rollback()
 			return err
 		}

@@ -12,6 +12,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
 	"github.com/sudebaker/acb-go/internal/rustfs"
@@ -97,7 +98,8 @@ func setupRouterWithRustFS(t *testing.T) (*db.TaskRepo, *rustfs.Client, http.Han
 	memStore := newHandlerMemStore()
 	rustfsClient := rustfs.NewClientWithStore(memStore, "test-bucket")
 
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient, nil, nil)
+	cfg := &config.Config{MaxUploadSizeMB: 32}
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient, nil, cfg)
 	return taskRepo, rustfsClient, r, memStore
 }
 

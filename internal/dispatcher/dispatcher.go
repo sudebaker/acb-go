@@ -392,15 +392,8 @@ func FindNextForAgent(agentRepo *db.AgentRepo, taskRepo *db.TaskRepo, agentName 
 	for _, t := range tasks {
 		// Skip tasks with uncompleted parents
 		if len(t.Parents) > 0 {
-			parentsDone := true
-			for _, parentID := range t.Parents {
-				parentTask, err := taskRepo.GetByID(parentID)
-				if err != nil || parentTask == nil || parentTask.Status != "completed" {
-					parentsDone = false
-					break
-				}
-			}
-			if !parentsDone {
+			parentsDone, err := taskRepo.AreParentsCompleted(t.Parents)
+			if err != nil || !parentsDone {
 				continue
 			}
 		}

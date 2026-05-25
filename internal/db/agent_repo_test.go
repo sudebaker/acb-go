@@ -240,9 +240,20 @@ func TestUpsertAgentWithWebhook(t *testing.T) {
 	if got.WebhookURL != "http://localhost:8645/webhooks/amanda" {
 		t.Errorf("expected webhook_url, got %q", got.WebhookURL)
 	}
-	// GetByName clears token but should keep webhook_secret
-	if got.WebhookSecret != "secret-123" {
-		t.Errorf("expected webhook_secret, got %q", got.WebhookSecret)
+	// Webhook secret should be encrypted at rest
+	if got.WebhookSecret == "" {
+		t.Fatal("expected webhook_secret to be stored (encrypted)")
+	}
+	if got.WebhookSecret == "secret-123" {
+		t.Error("webhook_secret should be encrypted, not plaintext")
+	}
+	// Verify it can be decrypted
+	decrypted, err := DecryptWebhookSecret(got.WebhookSecret)
+	if err != nil {
+		t.Errorf("failed to decrypt webhook_secret: %v", err)
+	}
+	if decrypted != "secret-123" {
+		t.Errorf("expected decrypted secret to be %q, got %q", "secret-123", decrypted)
 	}
 	if got.Token != "" {
 		t.Errorf("expected token to be cleared, got %q", got.Token)

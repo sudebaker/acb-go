@@ -61,9 +61,7 @@ func getCipher() (cipher.AEAD, error) {
 func EncryptWebhookSecret(plaintext string) (string, error) {
 	gcm, err := getCipher()
 	if err != nil {
-		// If cipher not initialized, return plaintext (dev mode)
-		// but log a warning in production this should fail
-		return plaintext, nil
+		return "", fmt.Errorf("webhook encryption not configured: %w", err)
 	}
 
 	nonce := make([]byte, gcm.NonceSize())
@@ -80,8 +78,7 @@ func EncryptWebhookSecret(plaintext string) (string, error) {
 func DecryptWebhookSecret(encoded string) (string, error) {
 	gcm, err := getCipher()
 	if err != nil {
-		// If cipher not initialized, assume plaintext (dev mode)
-		return encoded, nil
+		return "", fmt.Errorf("webhook decryption not configured: %w", err)
 	}
 
 	data, err := base64.StdEncoding.DecodeString(encoded)

@@ -23,13 +23,13 @@ func NewDashboardHandler(taskRepo *db.TaskRepo, agentRepo *db.AgentRepo, staleAg
 func (h *DashboardHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	counts, err := h.taskRepo.GetTaskCounts()
 	if err != nil {
-		WriteError(w, 500, "counts_failed", err.Error())
+		WriteErrorSafe(w, 500, "counts_failed", err)
 		return
 	}
 
 	tasks, err := h.taskRepo.List("", "")
 	if err != nil {
-		WriteError(w, 500, "list_failed", err.Error())
+		WriteErrorSafe(w, 500, "list_failed", err)
 		return
 	}
 	if tasks == nil {
@@ -49,6 +49,7 @@ func (h *DashboardHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 		"counts":          counts,
 		"tasks_by_status": groupTasksByStatus(tasks),
 		"stale_agents":    staleCount,
+		"total":           counts.Total,
 	})
 }
 

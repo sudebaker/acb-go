@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/sudebaker/acb-go/internal/models"
@@ -16,6 +17,58 @@ const (
 	pgTimestampSec   = "2006-01-02 15:04:05+00"
 	pgTimestampNoTZ  = "2006-01-02 15:04:05"
 )
+
+// taskColumns is the column list used in task queries.
+const taskColumns = `id, title, assignee, status, priority, parents, skills, required_skills, tags,
+	body_goal, body_context, body_deliverable_format, body_deliverable_path,
+	created_at, updated_at, summary, artifacts_json,
+	last_heartbeat, max_retries, retry_count`
+
+// scanTaskRow scans a row into a Task and unmarshals JSON fields.
+func scanTaskRow(scanner interface {
+	Scan(dest ...interface{}) error
+}) (*models.Task, error) {
+	task := &models.Task{}
+	var parents, skills, requiredSkills, tags, artifacts string
+	var createdAt, updatedAt string
+	var lastHeartbeat sql.NullTime
+	err := scanner.Scan(
+		&task.ID, &task.Title, &task.Assignee, &task.Status, &task.Priority,
+		&parents, &skills, &requiredSkills, &tags,
+		&task.BodyGoal, &task.BodyContext,
+		&task.BodyDeliverableFmt, &task.BodyDeliverablePath,
+		&createdAt, &updatedAt, &task.Summary, &artifacts,
+		&lastHeartbeat, &task.MaxRetries, &task.RetryCount,
+	)
+	if err != nil {
+		return nil, err
+	}
+
+	task.CreatedAt = parseTime(createdAt)
+	task.UpdatedAt = parseTime(updatedAt)
+	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
+		log.Printf("[WARN] scanTaskRow: failed to unmarshal parents: %v", err)
+	}
+	if err := json.Unmarshal([]byte(skills), &task.Skills); err != nil {
+		log.Printf("[WARN] scanTaskRow: failed to unmarshal skills: %v", err)
+	}
+	if err := json.Unmarshal([]byte(requiredSkills), &task.RequiredSkills); err != nil {
+		log.Printf("[WARN] scanTaskRow: failed to unmarshal required_skills: %v", err)
+	}
+	if err := json.Unmarshal([]byte(tags), &task.Tags); err != nil {
+		log.Printf("[WARN] scanTaskRow: failed to unmarshal tags: %v", err)
+	}
+	if err := json.Unmarshal([]byte(artifacts), &task.Artifacts); err != nil {
+		log.Printf("[WARN] scanTaskRow: failed to unmarshal artifacts: %v", err)
+	}
+	if lastHeartbeat.Valid {
+		task.LastHeartbeat = &lastHeartbeat.Time
+	}
+	if task.Status == "" {
+		task.Status = "pending"
+	}
+	return task, nil
+}
 
 func parseTime(s string) time.Time {
 	if s == "" {
@@ -100,58 +153,65 @@ func (r *TaskRepo) Create(task *models.Task) error {
 
 func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 	row := r.db.QueryRow(
-		`SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags,
-			body_goal, body_context, body_deliverable_format, body_deliverable_path,
-			created_at, updated_at, summary, artifacts_json,
-			last_heartbeat, max_retries, retry_count
-		FROM tasks WHERE id = $1`, id,
+		`SELECT `+taskColumns+` FROM tasks WHERE id = $1`, id,
 	)
 
-	task := &models.Task{}
-	var parents, skills, requiredSkills, tags, artifacts string
-	var createdAt, updatedAt string
-	var lastHeartbeat sql.NullTime
-	err := row.Scan(
-		&task.ID, &task.Title, &task.Assignee, &task.Status, &task.Priority,
-		&parents, &skills, &requiredSkills, &tags,
-		&task.BodyGoal, &task.BodyContext,
-		&task.BodyDeliverableFmt, &task.BodyDeliverablePath,
-		&createdAt, &updatedAt, &task.Summary, &artifacts,
-		&lastHeartbeat, &task.MaxRetries, &task.RetryCount,
-	)
+	task, err := scanTaskRow(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("scan task: %w", err)
 	}
-
-	task.CreatedAt = parseTime(createdAt)
-	task.UpdatedAt = parseTime(updatedAt)
-	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
-		log.Printf("[WARN] GetByID: failed to unmarshal parents: %v", err)
-	}
-	if err := json.Unmarshal([]byte(skills), &task.Skills); err != nil {
-		log.Printf("[WARN] GetByID: failed to unmarshal skills: %v", err)
-	}
-	if err := json.Unmarshal([]byte(requiredSkills), &task.RequiredSkills); err != nil {
-		log.Printf("[WARN] GetByID: failed to unmarshal required_skills: %v", err)
-	}
-	if err := json.Unmarshal([]byte(tags), &task.Tags); err != nil {
-		log.Printf("[WARN] GetByID: failed to unmarshal tags: %v", err)
-	}
-	if err := json.Unmarshal([]byte(artifacts), &task.Artifacts); err != nil {
-		log.Printf("[WARN] GetByID: failed to unmarshal artifacts: %v", err)
-	}
-
-	if lastHeartbeat.Valid {
-		task.LastHeartbeat = &lastHeartbeat.Time
-	}
-
-	if task.Status == "" {
-		task.Status = "pending"
-	}
 	return task, nil
+}
+
+// getTasksByIDs returns all tasks matching the given IDs in a single batch query.
+func (r *TaskRepo) getTasksByIDs(ids []string) ([]*models.Task, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]interface{}, len(ids))
+	for i, id := range ids {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = id
+	}
+	query := fmt.Sprintf("SELECT "+taskColumns+" FROM tasks WHERE id IN (%s)", strings.Join(placeholders, ","))
+	rows, err := r.db.Query(query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("batch get tasks: %w", err)
+	}
+	defer rows.Close()
+
+	var tasks []*models.Task
+	for rows.Next() {
+		task, err := scanTaskRow(rows)
+		if err != nil {
+			return nil, fmt.Errorf("batch scan task: %w", err)
+		}
+		tasks = append(tasks, task)
+	}
+	return tasks, rows.Err()
+}
+
+// AreParentsCompleted returns true if all parent tasks with the given IDs have status 'completed'.
+func (r *TaskRepo) AreParentsCompleted(parentIDs []string) (bool, error) {
+	if len(parentIDs) == 0 {
+		return true, nil
+	}
+	placeholders := make([]string, len(parentIDs))
+	args := make([]interface{}, len(parentIDs))
+	for i, pid := range parentIDs {
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+		args[i] = pid
+	}
+	query := fmt.Sprintf("SELECT COUNT(*) FROM tasks WHERE id IN (%s) AND status = 'completed'", strings.Join(placeholders, ","))
+	var count int
+	if err := r.db.QueryRow(query, args...).Scan(&count); err != nil {
+		return false, fmt.Errorf("check parents: %w", err)
+	}
+	return count == len(parentIDs), nil
 }
 
 func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]models.Task, error) {
@@ -172,7 +232,8 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 	// Filter by required_skills - task must have ALL required skills
 	for _, skill := range requiredSkills {
 		query += fmt.Sprintf(" AND required_skills LIKE $%d", paramIdx)
-		args = append(args, fmt.Sprintf("%%%s%%", skill))
+		escaped := strings.NewReplacer(`%`, `\%`, `_`, `\_`).Replace(skill)
+		args = append(args, fmt.Sprintf("%%%s%%", escaped))
 		paramIdx++
 	}
 
@@ -685,14 +746,13 @@ func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
 
 	graph := &TaskGraph{Task: task, Parents: []*models.Task{}, Children: []*models.Task{}}
 
-	for _, parentID := range task.Parents {
-		parent, err := r.GetByID(parentID)
+	// Batch load parents
+	if len(task.Parents) > 0 {
+		parents, err := r.getTasksByIDs(task.Parents)
 		if err != nil {
-			log.Printf("[WARN] GetDependencyGraph: parent %s: %v", parentID, err)
-			continue
-		}
-		if parent != nil {
-			graph.Parents = append(graph.Parents, parent)
+			log.Printf("[WARN] GetDependencyGraph: batch load parents: %v", err)
+		} else {
+			graph.Parents = parents
 		}
 	}
 
@@ -706,19 +766,23 @@ func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
 	}
 	defer rows.Close()
 
+	var childIDs []string
 	for rows.Next() {
 		var childID string
 		if err := rows.Scan(&childID); err != nil {
 			log.Printf("[WARN] GetDependencyGraph: scan child: %v", err)
 			continue
 		}
-		child, err := r.GetByID(childID)
+		childIDs = append(childIDs, childID)
+	}
+
+	// Batch load children
+	if len(childIDs) > 0 {
+		children, err := r.getTasksByIDs(childIDs)
 		if err != nil {
-			log.Printf("[WARN] GetDependencyGraph: get child %s: %v", childID, err)
-			continue
-		}
-		if child != nil {
-			graph.Children = append(graph.Children, child)
+			log.Printf("[WARN] GetDependencyGraph: batch load children: %v", err)
+		} else {
+			graph.Children = children
 		}
 	}
 
@@ -735,21 +799,7 @@ func (r *TaskRepo) CheckParentsCompleted(taskID string) (bool, error) {
 	if task == nil {
 		return false, fmt.Errorf("task %s not found", taskID)
 	}
-	if len(task.Parents) == 0 {
-		return true, nil
-	}
-
-	for _, parentID := range task.Parents {
-		var status string
-		err := r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", parentID).Scan(&status)
-		if err != nil {
-			return false, fmt.Errorf("check parent %s: %w", parentID, err)
-		}
-		if status != "completed" {
-			return false, nil
-		}
-	}
-	return true, nil
+	return r.AreParentsCompleted(task.Parents)
 }
 
 // PromoteChildren evaluates all tasks that list the given task as a parent.

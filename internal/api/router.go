@@ -57,7 +57,7 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	}
 
 	if rustfsClient != nil && taskRepo != nil {
-		ah := &ArtifactHandler{taskRepo: taskRepo, rustfs: rustfsClient, cfg: config.Load()}
+		ah := &ArtifactHandler{taskRepo: taskRepo, rustfs: rustfsClient, cfg: cfg}
 		r.Post("/tasks/{id}/artifacts", ah.UploadArtifact)
 		r.Get("/tasks/{id}/artifacts", ah.DispatchListOrDownload)
 		r.Delete("/tasks/{id}/artifacts", ah.DeleteArtifact)

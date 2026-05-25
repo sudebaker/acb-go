@@ -33,7 +33,8 @@ func init() {
 	}
 
 	log.Info().Msg("Admin token generated for bootstrap authentication")
-	log.Warn().Str("token", adminToken).Msg("ADMIN TOKEN (save this for initial agent registration - changes on restart)")
+	log.Warn().Msg("ADMIN TOKEN generated — save it now. It will change on next restart. Check startup logs for the next occurrence.")
+	log.Debug().Str("token", adminToken).Msg("Admin token for bootstrap authentication (visible only with debug logging)")
 }
 
 func AuthMiddleware(repo *db.AgentRepo) func(http.Handler) http.Handler {

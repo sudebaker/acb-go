@@ -172,20 +172,3 @@ func NewSafeHTTPClient() *http.Client {
 func GetConnectTimeout() time.Duration {
 	return 5 * time.Second
 }
-
-// CheckAndBlockPrivateIPs validates a URL and blocks private/loopback hosts.
-func CheckAndBlockPrivateIPs(rawURL string) error {
-	if err := ValidateWebhookURL(rawURL); err != nil {
-		return err
-	}
-	return nil
-}
-
-// ExtractHostForIPCheck returns the host portion of a URL for DNS resolution.
-func ExtractHostForIPCheck(rawURL string) (string, error) {
-	u, err := url.Parse(rawURL)
-	if err != nil {
-		return "", err
-	}
-	return u.Host, nil
-}

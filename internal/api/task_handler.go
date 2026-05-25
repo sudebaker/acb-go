@@ -86,14 +86,14 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.taskRepo.Create(task); err != nil {
-		WriteError(w, 500, "create_failed", err.Error())
+		WriteErrorSafe(w, 500, "create_failed", err)
 		return
 	}
 
 	// Retrieve the task from DB to get server-generated timestamps (created_at, updated_at)
 	createdTask, err := h.taskRepo.GetByID(task.ID)
 	if err != nil {
-		WriteError(w, 500, "get_task_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
 	}
 
@@ -114,7 +114,7 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 	tasks, err := h.taskRepo.List(status, assignee, requiredSkills...)
 	if err != nil {
-		WriteError(w, 500, "list_failed", err.Error())
+		WriteErrorSafe(w, 500, "list_failed", err)
 		return
 	}
 	if tasks == nil {
@@ -130,7 +130,7 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_failed", err)
 		return
 	}
 	if task == nil {
@@ -159,7 +159,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 	// Get task first to check required skills and old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_failed", err)
 		return
 	}
 	if task == nil {
@@ -172,7 +172,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 	if len(task.Parents) > 0 {
 		parentsDone, err := h.taskRepo.CheckParentsCompleted(id)
 		if err != nil {
-			WriteError(w, 500, "check_parents_failed", err.Error())
+			WriteErrorSafe(w, 500, "check_parents_failed", err)
 			return
 		}
 		if !parentsDone {
@@ -185,7 +185,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 	if len(task.RequiredSkills) > 0 {
 		agent, err := h.agentRepo.GetByName(input.Assignee)
 		if err != nil {
-			WriteError(w, 500, "get_agent_failed", err.Error())
+			WriteErrorSafe(w, 500, "get_agent_failed", err)
 			return
 		}
 		if agent == nil {
@@ -220,7 +220,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &ce) {
 			WriteConflict(w, "claim_failed", ce.Message, ce.CurrentStatus)
 		} else {
-			WriteError(w, 409, "claim_failed", err.Error())
+			WriteErrorSafe(w, 409, "claim_failed", err)
 		}
 		return
 	}
@@ -241,7 +241,7 @@ func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 	// Get task before starting to capture old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_failed", err)
 		return
 	}
 	if task == nil {
@@ -256,7 +256,7 @@ func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &ce) {
 			WriteConflict(w, "start_failed", ce.Message, ce.CurrentStatus)
 		} else {
-			WriteError(w, 409, "start_failed", err.Error())
+			WriteErrorSafe(w, 409, "start_failed", err)
 		}
 		return
 	}
@@ -290,7 +290,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	// Get task before blocking to include in webhook and capture old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_task_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
 	}
 	if task == nil {
@@ -304,7 +304,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &ce) {
 			WriteConflict(w, "block_failed", ce.Message, ce.CurrentStatus)
 		} else {
-			WriteError(w, 409, "block_failed", err.Error())
+			WriteErrorSafe(w, 409, "block_failed", err)
 		}
 		return
 	}
@@ -312,7 +312,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	// Get updated task after blocking
 	task, err = h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_task_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
 	}
 
@@ -323,7 +323,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		Status:   "pending",
 	}
 	if err := h.gateRepo.CreateGate(gate); err != nil {
-		WriteError(w, 500, "gate_create_failed", err.Error())
+		WriteErrorSafe(w, 500, "gate_create_failed", err)
 		return
 	}
 
@@ -355,7 +355,7 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	// Get task before unblocking to capture old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_task_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
 	}
 	if task == nil {
@@ -365,19 +365,19 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	oldStatus := task.Status
 
 	if err := h.gateRepo.ResolveGate(input.GateID); err != nil {
-		WriteError(w, 409, "resolve_failed", err.Error())
+		WriteErrorSafe(w, 409, "resolve_failed", err)
 		return
 	}
 
 	if err := h.taskRepo.UpdateStatus(id, "in_progress"); err != nil {
-		WriteError(w, 500, "update_failed", err.Error())
+		WriteErrorSafe(w, 500, "update_failed", err)
 		return
 	}
 
 	// Get updated task after unblocking
 	task, err = h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_task_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
 	}
 
@@ -405,7 +405,7 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	// Get task before completing to capture old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_task_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
 	}
 	if task == nil {
@@ -420,7 +420,7 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &ce) {
 			WriteConflict(w, "complete_failed", ce.Message, ce.CurrentStatus)
 		} else {
-			WriteError(w, 409, "complete_failed", err.Error())
+			WriteErrorSafe(w, 409, "complete_failed", err)
 		}
 		return
 	}
@@ -449,7 +449,7 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 	// Get task before failing to capture old status
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_task_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
 	}
 	if task == nil {
@@ -464,7 +464,7 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 		if errors.As(err, &ce) {
 			WriteConflict(w, "fail_failed", ce.Message, ce.CurrentStatus)
 		} else {
-			WriteError(w, 409, "fail_failed", err.Error())
+			WriteErrorSafe(w, 409, "fail_failed", err)
 		}
 		return
 	}
@@ -496,7 +496,7 @@ func (h *TaskHandler) TaskHeartbeat(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.taskRepo.GetByID(id)
 	if err != nil {
-		WriteError(w, 500, "get_failed", err.Error())
+		WriteErrorSafe(w, 500, "get_failed", err)
 		return
 	}
 	if task == nil {
@@ -509,7 +509,7 @@ func (h *TaskHandler) TaskHeartbeat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := h.taskRepo.UpdateTaskHeartbeat(id); err != nil {
-		WriteError(w, 500, "heartbeat_failed", err.Error())
+		WriteErrorSafe(w, 500, "heartbeat_failed", err)
 		return
 	}
 
@@ -523,7 +523,7 @@ func (h *TaskHandler) TaskGraph(w http.ResponseWriter, r *http.Request) {
 
 	graph, err := h.taskRepo.GetDependencyGraph(id)
 	if err != nil {
-		WriteError(w, 500, "graph_failed", err.Error())
+		WriteErrorSafe(w, 500, "graph_failed", err)
 		return
 	}
 	if graph == nil {
@@ -541,7 +541,7 @@ func (h *TaskHandler) ListTaskEvents(w http.ResponseWriter, r *http.Request) {
 
 	events, err := h.taskRepo.ListTaskEvents(id)
 	if err != nil {
-		WriteError(w, 500, "list_events_failed", err.Error())
+		WriteErrorSafe(w, 500, "list_events_failed", err)
 		return
 	}
 	if events == nil {
@@ -562,7 +562,7 @@ func (h *TaskHandler) DispatchNext(w http.ResponseWriter, r *http.Request) {
 
 	task, err := dispatcher.FindNextForAgent(h.agentRepo, h.taskRepo, agentName)
 	if err != nil {
-		WriteError(w, 500, "dispatch_failed", err.Error())
+		WriteErrorSafe(w, 500, "dispatch_failed", err)
 		return
 	}
 	if task == nil {
