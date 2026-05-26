@@ -50,7 +50,7 @@ All environment variables are optional (defaults shown):
 | `ACB_ARTIFACT_TTL_DAYS` | `30` | Days before artifacts are auto-cleaned |
 | `ACB_LOG_LEVEL` | `info` | Logging level |
 
-## API Overview (16 endpoints)
+## API Overview (17 endpoints)
 
 ### Tasks
 | Method | Path | Description |
@@ -59,6 +59,7 @@ All environment variables are optional (defaults shown):
 | `GET` | `/tasks` | List tasks (query: `?status=`, `?assignee=`) |
 | `GET` | `/tasks/dispatch` | Get next matching task for an agent (smart polling) |
 | `GET` | `/tasks/:id` | Get task details |
+| `GET` | `/tasks/:id/gates` | List gates for a task |
 | `POST` | `/tasks/:id/claim` | Claim a task for an agent |
 | `POST` | `/tasks/:id/start` | Start execution |
 | `POST` | `/tasks/:id/block` | Block on a gate (human intervention) |
@@ -185,9 +186,11 @@ docs/
   deploy-agents.md       — full agent deployment & ACB cron setup guide
   dispatcher-architecture.md — dispatch design decision record
 scripts/
-  acb-agent-poller.py     — merged task poller + state tracker (silent if no changes)
-  provision-agent.sh      — generic agent provisioning (platform-agnostic)
-  provision-hermes-cron.sh — Hermes-specific cron job setup hook
+  acb-agent-poller.py         — agent task poller + state tracker (silent if no changes)
+  acb-orchestrator-poller.py  — orchestrator task monitor + auto-approve gates
+  provision-agent.sh          — generic agent provisioning (platform-agnostic)
+  provision-hermes-cron.sh    — Hermes-specific cron job setup hook
+  simulate-orchestration.py   — e2e orchestration simulation
 ```
 
 ## Docker

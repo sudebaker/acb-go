@@ -622,6 +622,34 @@ func (h *TaskHandler) ListTaskEvents(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, 200, events)
 }
 
+// ListTaskGates returns all gates attached to a task.
+// GET /tasks/{id}/gates
+func (h *TaskHandler) ListTaskGates(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+
+	task, err := h.taskRepo.GetByID(ctx, id)
+	if err != nil {
+		WriteErrorSafe(w, 500, "get_task_failed", err)
+		return
+	}
+	if task == nil {
+		WriteError(w, 404, "not_found", "task not found")
+		return
+	}
+
+	gates, err := h.gateRepo.GetByTaskID(ctx, id)
+	if err != nil {
+		WriteErrorSafe(w, 500, "list_gates_failed", err)
+		return
+	}
+	if gates == nil {
+		gates = []models.Gate{}
+	}
+
+	WriteJSON(w, 200, gates)
+}
+
 // DispatchNext returns the best-matching pending task for the requesting agent.
 // GET /tasks/dispatch?agent=<name>
 func (h *TaskHandler) DispatchNext(w http.ResponseWriter, r *http.Request) {

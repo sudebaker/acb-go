@@ -444,6 +444,56 @@ func TestListTaskEvents_EmptyForNonexistent(t *testing.T) {
 	}
 }
 
+func TestListTaskGates_200(t *testing.T) {
+	d, r := setupRouter(t)
+	gateRepo := db.NewGateRepo(d)
+	taskRepo := db.NewTaskRepo(d)
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	taskRepo.ClaimTask(context.Background(), "t001", "worker-a")
+	taskRepo.StartTask(context.Background(), "t001")
+	taskRepo.UpdateStatus(context.Background(), "t001", "blocked")
+	gateRepo.CreateGate(context.Background(), &models.Gate{GateID: "g001", TaskID: "t001", Question: "Q?"})
+
+	req := authRequest("GET", "/tasks/t001/gates", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var gates []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&gates); err != nil {
+		t.Fatalf("decode gates: %v", err)
+	}
+	if len(gates) != 1 {
+		t.Fatalf("expected 1 gate, got %d", len(gates))
+	}
+	if gates[0]["gate_id"] != "g001" {
+		t.Errorf("expected gate_id g001, got %v", gates[0]["gate_id"])
+	}
+}
+
+func TestListTaskGates_NoGates_200(t *testing.T) {
+	d, r := setupRouter(t)
+	taskRepo := db.NewTaskRepo(d)
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+
+	req := authRequest("GET", "/tasks/t001/gates", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var gates []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&gates); err != nil {
+		t.Fatalf("decode gates: %v", err)
+	}
+	if len(gates) != 0 {
+		t.Errorf("expected empty gates array, got %d items", len(gates))
+	}
+}
+
 func TestDispatchNext_MatchingTask(t *testing.T) {
 	d := setupTestDB(t)
 	taskRepo := db.NewTaskRepo(d)

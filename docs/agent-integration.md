@@ -200,9 +200,10 @@ Content-Type: application/json
 This transitions the task to `blocked` status and creates a gate record (`pending`). The full gate flow involves three parties — agent, orchestrator, and back to agent:
 
 1. **Agent** submits their answer via `POST /tasks/:id/gates/:gate_id/answer` — gate goes to `asked`
-2. **Orchestrator** reviews the answer and approves via `POST /tasks/:id/gates/:gate_id/approve` — gate goes to `answered`
-3. **Orchestrator** calls `POST /tasks/:id/unblock` to resolve the gate — gate goes to `resolved`, task returns to `in_progress`
-4. **Agent** detects the task is `in_progress` (via Redis event or polling) and resumes work
+2. **Orchestrator** discovers the gate via `GET /tasks/:id/gates` and reviews the answer
+3. **Orchestrator** approves via `POST /tasks/:id/gates/:gate_id/approve` — gate goes to `answered`
+4. **Orchestrator** calls `POST /tasks/:id/unblock` to resolve the gate — gate goes to `resolved`, task returns to `in_progress`
+5. **Agent** detects the task is `in_progress` (via Redis event or polling) and resumes work
 
 The agent should listen for Redis events (see section 6) or poll `GET /tasks/:id` to detect when the task is unblocked and resume work.
 

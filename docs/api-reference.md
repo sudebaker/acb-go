@@ -335,6 +335,32 @@ Submit an agent's answer to a gate. The agent transitions the gate from `pending
 
 ---
 
+### `GET /tasks/:id/gates`
+
+List all gates attached to a task. Returns an empty array if the task has no gates.
+
+**Auth:** Bearer token required
+
+**Response `200`:**
+```json
+[
+  {
+    "gate_id": "g_001",
+    "task_id": "t_a1b2c3d4",
+    "question": "Should we proceed with the deployment?",
+    "status": "asked",
+    "answer": "I recommend proceeding. All checks passed.",
+    "created_at": "2026-05-26T20:00:00Z",
+    "answered_at": null
+  }
+]
+```
+
+**Response `404`:**
+- `not_found` — task does not exist
+
+---
+
 ### `POST /tasks/:id/gates/:gate_id/approve`
 
 Approve an agent's gate answer. The orchestrator transitions the gate from `asked` to `answered`, signaling that the gate answer is accepted and the task can be unblocked.
