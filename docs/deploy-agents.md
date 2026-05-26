@@ -22,15 +22,15 @@ Guía completa para poner en marcha los agentes Hermes con integración ACB (Age
 Agent-1     Agent-2   Agent-3
 (coding)    (infra)    (osint)
 
-acb-state-watcher (cada 15min, no_agent)
-  → Notifica al operador solo cambios reales (nueva/completada/fallida/blocked)
+acb-agent-poller.py (cada 15min)
+  → Detecta tareas nuevas via dispatch + cambios de estado, silencioso sin cambios
 ```
 
 Cada agente es un contenedor Docker corriendo Hermes Agent con:
 - Su propio `config.yaml`
 - Su propio `jobs.json` (cron tasks)
 - Su propio `.env` con tokens y API keys
-- Script `acb-task-checker.py` para consultar tareas
+- Script `acb-agent-poller.py` para consultar tareas y detectar cambios
 
 ---
 
@@ -86,7 +86,7 @@ INSERT INTO agents (name, port, token, skills, webhook_url)
 VALUES ('agent-3', 8646, '<AGENT_3_TOKEN>', '["osint","hacking","security","research","celery"]', 'http://localhost:8646/webhook/orchestrator');
 ```
 
-> Los tokens deben coincidir exactamente con lo que usa cada agente en `acb-task-checker.py`.
+> Los tokens se configuran via `ACB_TOKEN` en el entorno del agente.
 
 ---
 
@@ -108,7 +108,7 @@ VALUES ('agent-3', 8646, '<AGENT_3_TOKEN>', '["osint","hacking","security","rese
 │   │   ├── output/          # Output de ejecuciones
 │   │   └── .tick.lock
 │   ├── HEARTBEAT.md         # Instrucciones del heartbeat
-│   └── acb-task-checker.py  # Script de polling ACB
+│   └── acb-agent-poller.py  # Script de polling + state tracking ACB
 ```
 
 ### docker-compose.yml (ejemplo: Agent-1)
@@ -144,90 +144,76 @@ cron_mode: allow          # Permite que Hermes ejecute cronjobs
 
 ---
 
-## 4. Instalar el Script ACB Task Checker
+## 4. Instalar el Script ACB Agent Poller
 
-El script `acb-task-checker.py` se copia dentro del contenedor en `/opt/data/scripts/`:
+El script `acb-agent-poller.py` se copia dentro del contenedor en `/opt/data/scripts/`:
 
 > ⚠️ Hermes resuelve el campo `script` de jobs.json como `/opt/data/scripts/<script>`. Debe estar en ese subdirectorio.
 
 ```bash
 # Desde el host, copiar el script
 mkdir -p ~/src/{agent}/data/scripts/
-cp scripts/acb-task-checker.py ~/src/{agent}/data/scripts/acb-task-checker.py
+cp scripts/acb-agent-poller.py ~/src/{agent}/data/scripts/acb-agent-poller.py
 ```
 
 O mediante Docker:
 
 ```bash
 docker exec {container} mkdir -p /opt/data/scripts/
-docker cp acb-task-checker.py {container}:/opt/data/scripts/acb-task-checker.py
+docker cp acb-agent-poller.py {container}:/opt/data/scripts/acb-agent-poller.py
 ```
 
-El script consulta el ACB por tareas asignadas al agente y las muestra en formato legible. Si no hay tareas, sale silenciosamente (sin output).
+El script consulta el ACB por tareas asignadas al agente (via `GET /tasks/dispatch` y `GET /tasks`), compara con el estado anterior y solo genera output cuando hay cambios. Si no hay cambios, sale silenciosamente (sin output).
 
 ### Uso
 
 ```bash
-python3 /opt/data/scripts/acb-task-checker.py <agent_name>
-# Ejemplo: python3 /opt/data/scripts/acb-task-checker.py agent-1
+ACB_TOKEN=<token> python3 /opt/data/scripts/acb-agent-poller.py <agent_name>
+# Ejemplo: ACB_TOKEN=<AGENT_TOKEN> python3 /opt/data/scripts/acb-agent-poller.py agent-1
 ```
 
-The script shows active tasks with clear status indicators and includes the specific curl commands each agent needs to close the loop (claim → start → complete/fail).
+Output si hay cambios:
+
+```
+[DISPATCH] New task available: Implementar endpoint POST /upload
+[NEW] Task "Fix DB migration" (pending) -> agent-1
+[CHANGED] Task "Review PR #42": in_progress -> completed
+```
+
+Sin cambios: sin output (ideal para cronjobs silenciosos).
 
 > **Critical rule:** Agents MUST mark tasks as `completed` or `failed` when done. Leaving tasks in `in_progress` after finishing work is a broken state. The HEARTBEAT.md in each agent enforces this cycle.
 
 ---
 
-## 5. Crear el Cronjob ACB en cada Agente
+## 5. Crear el Cronjob ACB en cada Agente (Hermes)
 
-Cada agente necesita un cronjob que ejecute el checker cada 15 minutos. El formato es el de Hermes `jobs.json`:
-
-### Opción A: Editar jobs.json directamente
-
-Añadir a `/opt/data/cron/jobs.json`:
-
-```json
-{
-  "id": "<unique-id>",
-  "name": "acb-task-check",
-  "prompt": "Execute: python3 /opt/data/scripts/acb-task-checker.py <AGENT_NAME>. If no tasks (script returns nothing), respond [SILENT]. If tasks found, work on them. CRITICAL: when done, mark task completed: curl -X POST http://localhost:8090/tasks/<TASK_ID>/complete -H 'Authorization: Bearer <YOUR_TOKEN>' -H 'Content-Type: application/json' -d '{\"summary\": \"what you did\"}'. NEVER leave tasks in_progress after finishing. Always close the loop: claim-start-complete/fail. Report progress.",
-  "skills": [],
-  "skill": null,
-  "model": null,
-  "provider": null,
-  "base_url": null,
-  "script": "acb-task-checker.py",
-  "context_from": null,
-  "schedule": {
-    "kind": "cron",
-    "expr": "*/15 * * * *",
-    "display": "*/15 * * * *"
-  },
-  "schedule_display": "*/15 * * * *",
-  "repeat": { "times": null, "completed": 0 },
-  "enabled": true,
-  "state": "scheduled",
-  "deliver": "origin",
-  "origin": {
-    "platform": "telegram",
-    "chat_id": "<CHAT_ID>",
-    "chat_name": "",
-    "thread_id": null
-  }
-}
-```
-
-### Opción B: Crear via Docker exec
+Cada agente necesita un cronjob que ejecute el poller cada 15 minutos. Para plataforma Hermes, usar `provision-hermes-cron.sh`:
 
 ```bash
-# Copiar script al contenedor
-docker cp scripts/acb-task-checker.py {container}:/opt/data/acb-task-checker.py
-
-# Escribir el jobs.json (python genera el JSON con ID único)
-# Ver sección "Script de Provisionamiento" abajo
+ACB_AGENT_NAME="agent-1" \
+ACB_EXEC_PREFIX="docker exec agent-1-agent" \
+ACB_CP_PREFIX="docker cp" \
+ACB_CHAT_ID="123456789" \
+ACB_CHAT_NAME="Chat Name" \
+  ./scripts/provision-hermes-cron.sh
 ```
 
-> Después de modificar `jobs.json`, reiniciar el contenedor para que Hermes recarga el scheduler:
+Esto crea/actualiza el cronjob en `/opt/data/cron/jobs.json` con el formato Hermes.
+
+Variables:
+
+| Variable | Default | Descripción |
+|----------|---------|------------|
+| `ACB_AGENT_NAME` | (requerido) | Nombre del agente |
+| `ACB_EXEC_PREFIX` | (requerido) | Prefijo de ejecución (ej: `docker exec agent-1`) |
+| `ACB_CP_PREFIX` | (requerido) | Prefijo de copia (ej: `docker cp`) |
+| `ACB_CHAT_ID` | (requerido) | Chat ID de Telegram |
+| `ACB_CHAT_NAME` | (requerido) | Nombre del chat |
+| `ACB_CRON_EXPR` | `*/15 * * * *` | Expresión cron |
+| `ACB_PLATFORM` | `telegram` | Plataforma de entrega |
+
+> Después de crear el cronjob, el hook envía `SIGHUP` al PID 1 del contenedor. Si el contenedor no recarga con HUP, reiniciar manualmente:
 > ```bash
 > docker restart {container}
 > ```
@@ -236,61 +222,59 @@ docker cp scripts/acb-task-checker.py {container}:/opt/data/acb-task-checker.py
 
 ## 6. Script de Provisionamiento
 
-Para automatizar el setup de un nuevo agente, usar `provision-agent.sh`:
+Para automatizar el setup de un nuevo agente, usar `provision-agent.sh`.
+
+**Capa genérica** — no sabe de Docker, Hermes ni Telegram. Recibe todo por entorno:
 
 ```bash
-#!/bin/bash
-# provision-agent.sh <agent_name> <chat_id>
-# Ejemplo: ./provision-agent.sh agent-1 <CHAT_ID>
-
-AGENT_NAME="$1"
-CHAT_ID="$2"
-CONTAINER="${AGENT_NAME}-agent"
-ACB_URL="http://localhost:8090"
-
-if [ -z "$AGENT_NAME" ] || [ -z "$CHAT_ID" ]; then
-    echo "Uso: $0 <agent_name> <chat_id>"
-    exit 1
-fi
-
-# 1. Copiar el checker script
-docker cp scripts/acb-task-checker.py "${CONTAINER}:/opt/data/acb-task-checker.py"
-docker exec "$CONTAINER" chmod +x /opt/data/acb-task-checker.py
-
-# 2. Generar y escribir el cronjob
-python3 -c "
-import json, uuid
-job_id = uuid.uuid4().hex[:12]
-with open('/tmp/acb_cron_job.json') as f:
-    template = json.load(f)
-template['id'] = job_id
-template['name'] = 'acb-task-check'
-template['prompt'] = f'Execute: python3 /opt/data/scripts/acb-task-checker.py {AGENT_NAME}. If no tasks, respond [SILENT]. If tasks found, work on them. CRITICAL: when done, mark completed: curl -X POST http://localhost:8090/tasks/<TASK_ID>/complete -H "Authorization: Bearer <YOUR_TOKEN>" -H "Content-Type: application/json" -d \'{{"summary": "what you did"}}\'. NEVER leave tasks in_progress. Always: claim-start-complete/fail.'
-template['schedule'] = {'kind': 'cron', 'expr': '*/15 * * * *', 'display': '*/15 * * * *'}
-template['schedule_display'] = '*/15 * * * *'
-template['origin']['chat_id'] = '${CHAT_ID}'
-
-# Leer jobs existentes
-import subprocess
-result = subprocess.run(['docker', 'exec', '${CONTAINER}', 'cat', '/opt/data/cron/jobs.json'], capture_output=True, text=True)
-if result.returncode == 0 and result.stdout.strip():
-    data = json.loads(result.stdout)
-else:
-    data = {'jobs': []}
-
-# Añadir nuevo job
-data['jobs'].append(template)
-
-with open('/tmp/acb_cron_jobs.json', 'w') as f:
-    json.dump(data, f, indent=2, ensure_ascii=False)
-"
-docker cp /tmp/acb_cron_jobs.json "${CONTAINER}:/opt/data/cron/jobs.json"
-
-# 3. Reiniciar el contenedor
-docker restart "$CONTAINER"
-
-echo "✅ Agente ${AGENT_NAME} provisionado con ACB checker cada 15min"
+ACB_EXEC_PREFIX="docker exec agent-1-agent" \
+ACB_CP_PREFIX="docker cp" \
+ACB_CRON_HOOK="./scripts/provision-hermes-cron.sh" \
+  ./scripts/provision-agent.sh agent-1
 ```
+
+Variables de entorno:
+
+| Variable | Default | Descripción |
+|----------|---------|------------|
+| `ACB_EXEC_PREFIX` | (requerido) | Cómo ejecutar comandos en el target |
+| `ACB_CP_PREFIX` | (requerido) | Cómo copiar archivos al target |
+| `ACB_CP_DEST` | `${AGENT_NAME}:` | Prefijo del destino. Docker: `"container:"`, SSH: `"user@host:"`, local: `""` |
+| `ACB_CRON_HOOK` | `""` | Script hook para configurar el cron (ej: `provision-hermes-cron.sh`) |
+| `ACB_URL` | `http://localhost:8090` | URL del ACB para healthcheck |
+| `ACB_SCRIPTS_DIR` | `dirname $0` | Directorio con los scripts a copiar |
+
+El script:
+1. Verifica reachability del target
+2. Verifica conectividad ACB desde el target
+3. Crea `/opt/data/scripts/` en el target
+4. Copia `acb-agent-poller.py`
+5. Si `ACB_CRON_HOOK` está configurado, lo ejecuta con `ACB_AGENT_NAME`, `ACB_EXEC_PREFIX`, `ACB_CP_PREFIX` heredados
+
+### Ejemplo con Docker:
+
+```bash
+export ACB_EXEC_PREFIX="docker exec agent-1-agent"
+export ACB_CP_PREFIX="docker cp"
+export ACB_CP_DEST="agent-1-agent:"
+export ACB_CRON_HOOK="./scripts/provision-hermes-cron.sh"
+export ACB_CHAT_ID="123456789"
+export ACB_CHAT_NAME="Mi Chat"
+
+./scripts/provision-agent.sh agent-1
+```
+
+### Ejemplo con SSH:
+
+```bash
+export ACB_EXEC_PREFIX="ssh user@agent-host"
+export ACB_CP_PREFIX="scp"
+export ACB_CP_DEST="user@agent-host:"
+
+./scripts/provision-agent.sh agent-1
+```
+
+Sin `ACB_CRON_HOOK`, solo copia el script. El cron se configura externamente (crontab, systemd timer, K8s CronJob, etc.).
 
 ---
 
@@ -331,10 +315,10 @@ curl -X POST http://localhost:8090/tasks/{task_id}/complete \
 ### Ciclo automático
 
 1. **Orchestrator crea tarea** → ACB guarda tarea y dispatcha webhook al agente
-2. **Cada 15 minutos** → El cronjob del agente ejecuta `acb-task-checker.py`
+2. **Cada 15 minutos** → El cronjob del agente ejecuta `acb-agent-poller.py`
 3. **Si hay tareas** → El agente lee el output y empieza a trabajar
 4. **El agente actualiza estados** → `claim` → `start` → **`complete`/`fail`** ← **CRITICAL: must close the loop**
-5. **acb-state-watcher** → Detecta cambio de estado y notifica al operador por Telegram
+5. **acb-agent-poller.py** → Detecta cambios de estado y genera output para el cronjob
 
 ---
 
@@ -344,7 +328,7 @@ curl -X POST http://localhost:8090/tasks/{task_id}/complete \
 
 1. Verificar que el checker script existe:
    ```bash
-   docker exec {container} ls -la /opt/data/acb-task-checker.py
+    docker exec {container} ls -la /opt/data/scripts/acb-agent-poller.py
    ```
 
 2. Verificar que el cronjob está en `jobs.json`:
@@ -390,12 +374,11 @@ Todos usan `network_mode: host` → comparten `localhost`.
 
 ## 10. Scripts de Automatización
 
-El ecosistema ACB tiene dos componentes de automatización:
-
 | Script | Función | Dónde corre | Método |
 |--------|---------|-------------|--------|
-| `acb-state-watcher.py` | Notifica al operador (vía Telegram) solo cuando hay cambios reales en tareas (nueva, completada, fallida, blocked) | Host (orchestrator) | `no_agent`, script-only |
-| `acb-task-checker.py` | Checker pasivo — cada agente consulta sus tareas asignadas | Dentro de cada contenedor de agente | LLM-driven |
+| `acb-agent-poller.py` | Merge de checker + watcher — consulta tareas via dispatch, detecta cambios de estado, silencioso si no hay novedades | Dentro del agente (o host para `no_agent`) | Cron-driven |
+| `provision-agent.sh` | Copia `acb-agent-poller.py` al target, verifica conectividad | Host | Manual o CI |
+| `provision-hermes-cron.sh` | Crea/actualiza cronjob en Hermes `jobs.json` | Host | Hook de `provision-agent.sh` |
 
 ### Flujo de automatización
 
@@ -406,31 +389,25 @@ Orchestrator crea tarea → ACB guarda y dispatcha webhook al agente con skills 
                                               │   Agente Hermes recibe notificación y procesa
                                               │
                                               └── Canal 2: Polling cada 15min
-                                                  acb-task-checker.py consulta tareas del agente
+                                                  acb-agent-poller.py consulta dispatch + tareas
 
 Agente: claim → start → work → complete/fail
                                     │
-                         acb-state-watcher detecta cambio → Notifica al operador por Telegram
+                          acb-agent-poller.py detecta cambios → output para cronjob
 ```
 
-> **Diseño:** ACB hace dispatch por webhook cuando se crea una tarea. Los agentes tienen **dos canales** para recibirla: webhook directo y polling cada 15min como fallback. El orquestador solo recibe notificaciones cuando algo cambia (no spam).
+> **Diseño:** ACB hace dispatch por webhook cuando se crea una tarea. Los agentes tienen **dos canales** para recibirla: webhook directo y polling cada 15min como fallback.
 
 ### Tokens de autenticación
 
-Todos los scripts usan variables de entorno para los tokens (ver `.env.example`):
+Todos los scripts usan `ACB_TOKEN` para el token del agente (ver `.env.example`):
 
-| Rol | Variable de entorno | Descripción |
-|-----|---------------------|-------------|
+| Rol | Variable | Descripción |
+|-----|----------|-------------|
 | Orchestrator | `ACB_ADMIN_TOKEN` | Token maestro (admin) |
-| Agent-2 (infra) | `ACB_AGENT_2_TOKEN` | Token de agente |
-| Agent-3 (osint) | `ACB_AGENT_3_TOKEN` | Token de agente |
-| Agent-1 (coding) | `ACB_AGENT_1_TOKEN` | Token de agente |
+| Agente | `ACB_TOKEN` | Token del agente (Bearer auth) |
 
-> ⚠️ Todos los tokens se configuran mediante variables de entorno (ver `.env.example`). No hay tokens hardcodeados en los scripts.
-
-### Script del orquestador (host)
-
-`acb-state-watcher.py` corre en el host como cronjob de Hermes (`no_agent=true`). Compara el estado actual del ACB con el estado anterior (`/tmp/acb-watcher-state.json`) y solo genera output cuando hay cambios — sin cambios, es silencioso (no notifica). Se encuentra en `~/.hermes/scripts/`.
+> ⚠️ Todos los tokens se configuran mediante variables de entorno. No hay tokens hardcodeados en los scripts.
 
 ---
 
@@ -439,11 +416,11 @@ Todos los scripts usan variables de entorno para los tokens (ver `.env.example`)
 ```
 acb-go/
 ├── scripts/
-│   ├── acb-state-watcher.py   # Notificador de cambios (reemplaza 3 scripts eliminados)
-│   ├── acb-task-checker.py    # Checker pasivo para agentes
-│   ├── gen-env.sh             # Generador de .env
-│   ├── provision-agent.sh     # Provisionamiento de nuevos agentes
-│   └── test.sh                # Tests E2E
+│   ├── acb-agent-poller.py     # Poller + state tracker (merge checker/watcher)
+│   ├── gen-env.sh              # Generador de .env
+│   ├── provision-agent.sh      # Provisionamiento genérico
+│   ├── provision-hermes-cron.sh # Hook Hermes para cronjobs
+│   └── test.sh                 # Tests E2E
 ├── docs/
 │   ├── deploy-agents.md       # Esta guía
 │   ├── api-reference.md       # Referencia API del ACB
@@ -454,7 +431,7 @@ acb-go/
 └── main.go
 ```
 
-> **Nota:** Los scripts `acb-status-monitor.py`, `acb-poll-and-notify.py` y `acb-notify-agents.sh` fueron eliminados en mayo 2026. Sus funciones están consolidadas en `acb-state-watcher.py`.
+> **Nota:** Los scripts `acb-task-checker.py`, `acb-state-watcher.py`, `acb-status-monitor.py`, `acb-poll-and-notify.py` y `acb-notify-agents.sh` fueron eliminados. Sus funciones están consolidadas en `acb-agent-poller.py`.
 
 ## Notas
 

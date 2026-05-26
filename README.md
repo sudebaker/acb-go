@@ -175,8 +175,9 @@ docs/
   deploy-agents.md       — full agent deployment & ACB cron setup guide
   dispatcher-architecture.md — dispatch design decision record
 scripts/
-  acb-task-checker.py    — agent-side script: poll ACB for assigned tasks
-  provision-agent.sh     — automate agent provisioning with ACB cronjob
+  acb-agent-poller.py     — merged task poller + state tracker (silent if no changes)
+  provision-agent.sh      — generic agent provisioning (platform-agnostic)
+  provision-hermes-cron.sh — Hermes-specific cron job setup hook
 ```
 
 ## Docker
