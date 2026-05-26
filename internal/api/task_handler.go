@@ -3,7 +3,6 @@ package api
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/google/uuid"
@@ -25,6 +24,7 @@ type TaskHandler struct {
 }
 
 func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var input struct {
 		ID                  string   `json:"id"`
 		Title               string   `json:"title"`
@@ -56,7 +56,7 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	// Validate required_skills against allowed list
 	if len(input.RequiredSkills) > 0 {
 		if invalid := h.cfg.ValidateSkills(input.RequiredSkills); len(invalid) > 0 {
-			WriteError(w, 400, "invalid_required_skills", fmt.Sprintf("these skills are not allowed: %v", invalid))
+			WriteError(w, 400, "invalid_required_skills", "one or more required skills are not in the allowed catalog")
 			return
 		}
 	}
@@ -64,7 +64,15 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 	// Validate skills against allowed list
 	if len(input.Skills) > 0 {
 		if invalid := h.cfg.ValidateSkills(input.Skills); len(invalid) > 0 {
-			WriteError(w, 400, "invalid_skills", fmt.Sprintf("these skills are not allowed: %v", invalid))
+			WriteError(w, 400, "invalid_skills", "one or more skills are not in the allowed catalog")
+			return
+		}
+	}
+
+	// Validate tags against allowed list
+	if len(input.Tags) > 0 && h.cfg != nil {
+		if invalid := h.cfg.ValidateTags(input.Tags); len(invalid) > 0 {
+			WriteError(w, 400, "invalid_tags", "one or more tags are not in the allowed catalog")
 			return
 		}
 	}
@@ -85,13 +93,13 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 		MaxRetries:          input.MaxRetries,
 	}
 
-	if err := h.taskRepo.Create(task); err != nil {
+	if err := h.taskRepo.Create(ctx, task); err != nil {
 		WriteErrorSafe(w, 500, "create_failed", err)
 		return
 	}
 
 	// Retrieve the task from DB to get server-generated timestamps (created_at, updated_at)
-	createdTask, err := h.taskRepo.GetByID(task.ID)
+	createdTask, err := h.taskRepo.GetByID(ctx, task.ID)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
@@ -108,11 +116,12 @@ func (h *TaskHandler) CreateTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	status := r.URL.Query().Get("status")
 	assignee := r.URL.Query().Get("assignee")
 	requiredSkills := r.URL.Query()["required_skills"]
 
-	tasks, err := h.taskRepo.List(status, assignee, requiredSkills...)
+	tasks, err := h.taskRepo.List(ctx, status, assignee, requiredSkills...)
 	if err != nil {
 		WriteErrorSafe(w, 500, "list_failed", err)
 		return
@@ -126,9 +135,10 @@ func (h *TaskHandler) ListTasks(w http.ResponseWriter, r *http.Request) {
 
 // GetTask returns a single task by ID
 func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -142,6 +152,7 @@ func (h *TaskHandler) GetTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
 	var input struct {
@@ -157,7 +168,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get task first to check required skills and old status
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -170,7 +181,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 
 	// Validate parent tasks are completed
 	if len(task.Parents) > 0 {
-		parentsDone, err := h.taskRepo.CheckParentsCompleted(id)
+		parentsDone, err := h.taskRepo.CheckParentsCompleted(ctx, id)
 		if err != nil {
 			WriteErrorSafe(w, 500, "check_parents_failed", err)
 			return
@@ -183,7 +194,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 
 	// Validate agent has required skills
 	if len(task.RequiredSkills) > 0 {
-		agent, err := h.agentRepo.GetByName(input.Assignee)
+		agent, err := h.agentRepo.GetByName(ctx, input.Assignee)
 		if err != nil {
 			WriteErrorSafe(w, 500, "get_agent_failed", err)
 			return
@@ -214,7 +225,7 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	task, err = h.taskRepo.ClaimTask(id, input.Assignee)
+	task, err = h.taskRepo.ClaimTask(ctx, id, input.Assignee)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -236,10 +247,11 @@ func (h *TaskHandler) ClaimTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
 	// Get task before starting to capture old status
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -250,7 +262,7 @@ func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 	}
 	oldStatus := task.Status
 
-	task, err = h.taskRepo.StartTask(id)
+	task, err = h.taskRepo.StartTask(ctx, id)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -272,6 +284,7 @@ func (h *TaskHandler) StartTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
 	var input struct {
@@ -288,7 +301,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get task before blocking to include in webhook and capture old status
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
@@ -299,7 +312,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	}
 	oldStatus := task.Status
 
-	if _, err := h.taskRepo.BlockTask(id); err != nil {
+	if _, err := h.taskRepo.BlockTask(ctx, id); err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
 			WriteConflict(w, "block_failed", ce.Message, ce.CurrentStatus)
@@ -310,7 +323,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get updated task after blocking
-	task, err = h.taskRepo.GetByID(id)
+	task, err = h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
@@ -322,7 +335,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 		Question: input.Question,
 		Status:   "pending",
 	}
-	if err := h.gateRepo.CreateGate(gate); err != nil {
+	if err := h.gateRepo.CreateGate(ctx, gate); err != nil {
 		WriteErrorSafe(w, 500, "gate_create_failed", err)
 		return
 	}
@@ -338,6 +351,7 @@ func (h *TaskHandler) BlockTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
 	var input struct {
@@ -353,7 +367,7 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get task before unblocking to capture old status
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
@@ -364,18 +378,18 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	}
 	oldStatus := task.Status
 
-	if err := h.gateRepo.ResolveGate(input.GateID); err != nil {
+	if err := h.gateRepo.ResolveGate(ctx, input.GateID); err != nil {
 		WriteErrorSafe(w, 409, "resolve_failed", err)
 		return
 	}
 
-	if err := h.taskRepo.UpdateStatus(id, "in_progress"); err != nil {
+	if err := h.taskRepo.UpdateStatus(ctx, id, "in_progress"); err != nil {
 		WriteErrorSafe(w, 500, "update_failed", err)
 		return
 	}
 
 	// Get updated task after unblocking
-	task, err = h.taskRepo.GetByID(id)
+	task, err = h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
@@ -392,6 +406,7 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
 	var input struct {
@@ -403,7 +418,7 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get task before completing to capture old status
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
@@ -414,7 +429,7 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 	oldStatus := task.Status
 
-	task, err = h.taskRepo.CompleteTask(id, input.Summary)
+	task, err = h.taskRepo.CompleteTask(ctx, id, input.Summary)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -436,6 +451,7 @@ func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
 	var input struct {
@@ -447,7 +463,7 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get task before failing to capture old status
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_task_failed", err)
 		return
@@ -458,7 +474,7 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 	}
 	oldStatus := task.Status
 
-	result, err := h.taskRepo.FailTask(id, input.Reason)
+	result, err := h.taskRepo.FailTask(ctx, id, input.Reason)
 	if err != nil {
 		var ce *db.ConflictError
 		if errors.As(err, &ce) {
@@ -492,9 +508,10 @@ func (h *TaskHandler) FailTask(w http.ResponseWriter, r *http.Request) {
 // TaskHeartbeat updates the liveness timestamp for an in-progress task.
 // POST /tasks/{id}/heartbeat
 func (h *TaskHandler) TaskHeartbeat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
-	task, err := h.taskRepo.GetByID(id)
+	task, err := h.taskRepo.GetByID(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -508,7 +525,7 @@ func (h *TaskHandler) TaskHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.taskRepo.UpdateTaskHeartbeat(id); err != nil {
+	if err := h.taskRepo.UpdateTaskHeartbeat(ctx, id); err != nil {
 		WriteErrorSafe(w, 500, "heartbeat_failed", err)
 		return
 	}
@@ -519,9 +536,10 @@ func (h *TaskHandler) TaskHeartbeat(w http.ResponseWriter, r *http.Request) {
 // TaskGraph returns a task with its parent and child dependency tree.
 // GET /tasks/{id}/graph
 func (h *TaskHandler) TaskGraph(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
-	graph, err := h.taskRepo.GetDependencyGraph(id)
+	graph, err := h.taskRepo.GetDependencyGraph(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "graph_failed", err)
 		return
@@ -537,9 +555,10 @@ func (h *TaskHandler) TaskGraph(w http.ResponseWriter, r *http.Request) {
 // ListTaskEvents returns the event trail for a task.
 // GET /tasks/{id}/events
 func (h *TaskHandler) ListTaskEvents(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	id := chi.URLParam(r, "id")
 
-	events, err := h.taskRepo.ListTaskEvents(id)
+	events, err := h.taskRepo.ListTaskEvents(ctx, id)
 	if err != nil {
 		WriteErrorSafe(w, 500, "list_events_failed", err)
 		return
@@ -554,13 +573,14 @@ func (h *TaskHandler) ListTaskEvents(w http.ResponseWriter, r *http.Request) {
 // DispatchNext returns the best-matching pending task for the requesting agent.
 // GET /tasks/dispatch?agent=<name>
 func (h *TaskHandler) DispatchNext(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	agentName := r.URL.Query().Get("agent")
 	if agentName == "" {
 		WriteError(w, 400, "missing_agent", "agent query parameter is required")
 		return
 	}
 
-	task, err := dispatcher.FindNextForAgent(h.agentRepo, h.taskRepo, agentName)
+	task, err := dispatcher.FindNextForAgent(ctx, h.agentRepo, h.taskRepo, agentName)
 	if err != nil {
 		WriteErrorSafe(w, 500, "dispatch_failed", err)
 		return

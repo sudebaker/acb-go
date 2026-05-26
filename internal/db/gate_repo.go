@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"context"
 	"fmt"
 
 	"github.com/sudebaker/acb-go/internal/models"
@@ -15,11 +16,11 @@ func NewGateRepo(db *sql.DB) *GateRepo {
 	return &GateRepo{db: db}
 }
 
-func (r *GateRepo) CreateGate(gate *models.Gate) error {
+func (r *GateRepo) CreateGate(ctx context.Context, gate *models.Gate) error {
 	if gate.Status == "" {
 		gate.Status = "pending"
 	}
-	_, err := r.db.Exec(
+	_, err := r.db.ExecContext(ctx, 
 		`INSERT INTO gates (gate_id, task_id, question, ask, status, answer)
 		 VALUES ($1, $2, $3, $4, $5, $6)`,
 		gate.GateID, gate.TaskID, gate.Question, gate.Ask, gate.Status, gate.Answer,
@@ -27,8 +28,8 @@ func (r *GateRepo) CreateGate(gate *models.Gate) error {
 	return err
 }
 
-func (r *GateRepo) GetByTaskID(taskID string) ([]models.Gate, error) {
-	rows, err := r.db.Query(
+func (r *GateRepo) GetByTaskID(ctx context.Context, taskID string) ([]models.Gate, error) {
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT gate_id, task_id, question, ask, status, answer, created_at, answered_at
 		 FROM gates WHERE task_id = $1`,
 		taskID,
@@ -54,8 +55,8 @@ func (r *GateRepo) GetByTaskID(taskID string) ([]models.Gate, error) {
 	return gates, rows.Err()
 }
 
-func (r *GateRepo) AnswerGate(gateID, answer string) error {
-	res, err := r.db.Exec(
+func (r *GateRepo) AnswerGate(ctx context.Context, gateID, answer string) error {
+	res, err := r.db.ExecContext(ctx, 
 		`UPDATE gates SET status = 'answered', answer = $1, answered_at = NOW() WHERE gate_id = $2 AND status = 'asked'`,
 		answer, gateID,
 	)
@@ -69,8 +70,23 @@ func (r *GateRepo) AnswerGate(gateID, answer string) error {
 	return nil
 }
 
-func (r *GateRepo) ResolveGate(gateID string) error {
-	res, err := r.db.Exec(
+func (r *GateRepo) AskGate(ctx context.Context, gateID string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE gates SET status = 'asked' WHERE gate_id = $1 AND status = 'pending'`,
+		gateID,
+	)
+	if err != nil {
+		return fmt.Errorf("ask gate: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("gate %s not found or not in 'pending' status", gateID)
+	}
+	return nil
+}
+
+func (r *GateRepo) ResolveGate(ctx context.Context, gateID string) error {
+	res, err := r.db.ExecContext(ctx, 
 		`UPDATE gates SET status = 'resolved' WHERE gate_id = $1 AND status = 'answered'`,
 		gateID,
 	)

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -39,7 +40,7 @@ func TestRateLimiter_IndependentPerAgent(t *testing.T) {
 func TestHeartbeat_RateLimited(t *testing.T) {
 	d := setupTestDB(t)
 	agentRepo := db.NewAgentRepo(d)
-	agentRepo.UpsertAgent(&models.Agent{Name: "worker-a", Token: "rt-token"})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "worker-a", Token: "rt-token"})
 
 	limiter := NewRateLimiter(rate.Every(1*time.Hour), 1)
 	ah := &AgentHandler{agentRepo: agentRepo, limiter: limiter}

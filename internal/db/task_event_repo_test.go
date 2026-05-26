@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"testing"
 
@@ -27,25 +28,25 @@ func TestTaskEventRepo(t *testing.T) {
 
 	// Create a parent task first to satisfy FK constraint
 	taskRepo := NewTaskRepo(db)
-	if err := taskRepo.Create(&models.Task{ID: "task-001", Title: "test task for events"}); err != nil {
+	if err := taskRepo.Create(context.Background(), &models.Task{ID: "task-001", Title: "test task for events"}); err != nil {
 		t.Fatalf("failed to create parent task: %v", err)
 	}
 
 	repo := NewTaskEventRepo(db)
 
 	// Insert test events
-	err = repo.InsertEvent("task-001", "ClaimTask", "agent-alpha", "")
+	err = repo.InsertEvent(context.Background(), "task-001", "ClaimTask", "agent-alpha", "")
 	if err != nil {
 		t.Fatalf("failed to insert event: %v", err)
 	}
 
-	err = repo.InsertEvent("task-001", "StartTask", "", "started processing")
+	err = repo.InsertEvent(context.Background(), "task-001", "StartTask", "", "started processing")
 	if err != nil {
 		t.Fatalf("failed to insert second event: %v", err)
 	}
 
 	// List events
-	events, err := repo.ListByTask("task-001")
+	events, err := repo.ListByTask(context.Background(), "task-001")
 	if err != nil {
 		t.Fatalf("failed to list events: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestTaskEventRepo(t *testing.T) {
 	}
 
 	// Test non-existent task
-	events, err = repo.ListByTask("nonexistent")
+	events, err = repo.ListByTask(context.Background(), "nonexistent")
 	if err != nil {
 		t.Fatalf("unexpected error for nonexistent task: %v", err)
 	}

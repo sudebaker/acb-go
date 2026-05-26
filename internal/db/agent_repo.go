@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -17,7 +18,7 @@ func NewAgentRepo(db *sql.DB) *AgentRepo {
 	return &AgentRepo{db: db}
 }
 
-func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
+func (r *AgentRepo) UpsertAgent(ctx context.Context, agent *models.Agent) error {
 	// Store token as Argon2id hash, never plaintext
 	hash, prefix, err := hashToken(agent.Token)
 	if err != nil {
@@ -44,7 +45,7 @@ func (r *AgentRepo) UpsertAgent(agent *models.Agent) error {
 		heartbeat = sql.NullTime{Time: *agent.LastHeartbeat, Valid: true}
 	}
 
-	_, err = r.db.Exec(
+	_, err = r.db.ExecContext(ctx, 
 		`INSERT INTO agents (name, port, token, token_prefix, last_heartbeat, skills, webhook_url, webhook_secret)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 ON CONFLICT(name) DO UPDATE SET 
@@ -60,8 +61,8 @@ ON CONFLICT(name) DO UPDATE SET
 	return err
 }
 
-func (r *AgentRepo) GetByName(name string) (*models.Agent, error) {
-	row := r.db.QueryRow(
+func (r *AgentRepo) GetByName(ctx context.Context, name string) (*models.Agent, error) {
+	row := r.db.QueryRowContext(ctx, 
 		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE name = $1`, name,
 	)
 	agent := &models.Agent{}
@@ -85,9 +86,9 @@ func (r *AgentRepo) GetByName(name string) (*models.Agent, error) {
 	return agent, nil
 }
 
-func (r *AgentRepo) UpdateHeartbeat(name string) error {
+func (r *AgentRepo) UpdateHeartbeat(ctx context.Context, name string) error {
 	now := time.Now().UTC()
-	res, err := r.db.Exec(
+	res, err := r.db.ExecContext(ctx, 
 		"UPDATE agents SET last_heartbeat = $1 WHERE name = $2", now, name,
 	)
 	if err != nil {
@@ -100,7 +101,7 @@ func (r *AgentRepo) UpdateHeartbeat(name string) error {
 	return nil
 }
 
-func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
+func (r *AgentRepo) GetByToken(ctx context.Context, token string) (*models.Agent, error) {
 	if len(token) < 8 {
 		return nil, nil
 	}
@@ -114,7 +115,7 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 	}
 
 	// Try hash-based prefix lookup only
-	agent, err := r.getByTokenPrefix(token, hashPrefix)
+	agent, err := r.getByTokenPrefix(ctx, token, hashPrefix)
 	if err != nil {
 		return nil, err
 	}
@@ -126,18 +127,18 @@ func (r *AgentRepo) GetByToken(token string) (*models.Agent, error) {
 	return nil, nil
 }
 
-func (r *AgentRepo) getByTokenPrefix(token, prefix string) (*models.Agent, error) {
-	rows, err := r.db.Query(
+func (r *AgentRepo) getByTokenPrefix(ctx context.Context, token, prefix string) (*models.Agent, error) {
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents WHERE token_prefix = $1`, prefix,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query agents: %w", err)
 	}
 	defer rows.Close()
-	return r.scanMatchingAgent(rows, token)
+	return r.scanMatchingAgent(ctx, rows, token)
 }
 
-func (r *AgentRepo) scanMatchingAgent(rows *sql.Rows, token string) (*models.Agent, error) {
+func (r *AgentRepo) scanMatchingAgent(ctx context.Context, rows *sql.Rows, token string) (*models.Agent, error) {
 	for rows.Next() {
 		var a models.Agent
 		var heartbeat sql.NullTime
@@ -169,9 +170,9 @@ func (r *AgentRepo) scanMatchingAgent(rows *sql.Rows, token string) (*models.Age
 	return nil, nil
 }
 
-func (r *AgentRepo) ListStale(dur time.Duration) ([]models.Agent, error) {
+func (r *AgentRepo) ListStale(ctx context.Context, dur time.Duration) ([]models.Agent, error) {
 	cutoff := time.Now().UTC().Add(-dur)
-	rows, err := r.db.Query(
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT name, port, last_heartbeat, skills, webhook_url FROM agents
 WHERE last_heartbeat IS NULL OR last_heartbeat < $1`, cutoff,
 	)
@@ -200,9 +201,9 @@ WHERE last_heartbeat IS NULL OR last_heartbeat < $1`, cutoff,
 	return agents, rows.Err()
 }
 
-func (r *AgentRepo) GetSkills(name string) ([]string, error) {
+func (r *AgentRepo) GetSkills(ctx context.Context, name string) ([]string, error) {
 	var skills string
-	err := r.db.QueryRow("SELECT skills FROM agents WHERE name = $1", name).Scan(&skills)
+	err := r.db.QueryRowContext(ctx, "SELECT skills FROM agents WHERE name = $1", name).Scan(&skills)
 	if err == sql.ErrNoRows {
 		return nil, fmt.Errorf("agent %s not found", name)
 	}
@@ -216,8 +217,8 @@ func (r *AgentRepo) GetSkills(name string) ([]string, error) {
 	return result, nil
 }
 
-func (r *AgentRepo) HasRequiredSkills(agentName string, requiredSkills []string) (bool, error) {
-	agentSkills, err := r.GetSkills(agentName)
+func (r *AgentRepo) HasRequiredSkills(ctx context.Context, agentName string, requiredSkills []string) (bool, error) {
+	agentSkills, err := r.GetSkills(ctx, agentName)
 	if err != nil {
 		return false, err
 	}
@@ -239,8 +240,8 @@ func (r *AgentRepo) HasRequiredSkills(agentName string, requiredSkills []string)
 
 // FindMatchingAgents returns all agents whose skills include ALL of the requiredSkills.
 // If requiredSkills is empty, returns all agents.
-func (r *AgentRepo) FindMatchingAgents(requiredSkills []string) ([]models.Agent, error) {
-	rows, err := r.db.Query(`SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents`)
+func (r *AgentRepo) FindMatchingAgents(ctx context.Context, requiredSkills []string) ([]models.Agent, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT name, port, token, last_heartbeat, skills, webhook_url, webhook_secret FROM agents`)
 	if err != nil {
 		return nil, fmt.Errorf("find matching agents: %w", err)
 	}

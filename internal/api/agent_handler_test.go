@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http/httptest"
 	"strings"
@@ -21,7 +22,7 @@ func TestRegisterAgent_200(t *testing.T) {
 	gateRepo := db.NewGateRepo(d)
 
 	// Preregister an agent so we have a valid token for auth
-	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
 	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
 
@@ -60,7 +61,7 @@ func TestRegisterAgent_NoWebhook(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	gateRepo := db.NewGateRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
 	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
 
@@ -81,7 +82,7 @@ func TestRegisterAgent_NoWebhook(t *testing.T) {
 	}
 
 	// Verify the agent was stored and can be retrieved via repo
-	agent, err := agentRepo.GetByName("simple-agent")
+	agent, err := agentRepo.GetByName(context.Background(), "simple-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +95,7 @@ func TestRegisterAgent_MissingName(t *testing.T) {
 	d := setupTestDB(t)
 	agentRepo := db.NewAgentRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
 	r := NewRouter(db.NewTaskRepo(d), db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
 
@@ -112,7 +113,7 @@ func TestRegisterAgent_MissingName(t *testing.T) {
 	}
 
 	// Verify "admin" agent was created
-	agent, err := agentRepo.GetByName("admin")
+	agent, err := agentRepo.GetByName(context.Background(), "admin")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestRegisterAgent_Upsert(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	gateRepo := db.NewGateRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
 	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
 
@@ -165,7 +166,7 @@ func TestRegisterAgent_Upsert(t *testing.T) {
 	}
 
 	// Verify updated values
-	agent, _ := agentRepo.GetByName("upsert-agent")
+	agent, _ := agentRepo.GetByName(context.Background(), "upsert-agent")
 	if agent.Port != 8093 {
 		t.Errorf("expected updated port 8093, got %d", agent.Port)
 	}
@@ -177,7 +178,7 @@ func TestGetAgent_200(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	gateRepo := db.NewGateRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{
 		Name:          "fetch-agent",
 		Port:          8094,
 		Token:         "tok-fetch",
@@ -186,7 +187,7 @@ func TestGetAgent_200(t *testing.T) {
 		WebhookSecret: "secret-fetch",
 	})
 	// Need a valid auth token — use the registered agent
-	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
 	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
 

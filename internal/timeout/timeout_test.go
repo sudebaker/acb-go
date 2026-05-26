@@ -1,6 +1,7 @@
 package timeout
 
 import (
+	"context"
 	"database/sql"
 	"os"
 	"testing"
@@ -94,7 +95,7 @@ func TestPendingTimeoutService_RunsCheck(t *testing.T) {
 		Status:   "pending",
 		Priority: 3,
 	}
-	if err := repo.Create(task); err != nil {
+	if err := repo.Create(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
 	// Backdate created_at (PostgreSQL syntax)
@@ -109,7 +110,7 @@ func TestPendingTimeoutService_RunsCheck(t *testing.T) {
 	var got *models.Task
 	for i := 0; i < 60; i++ {
 		time.Sleep(50 * time.Millisecond)
-		got, _ = repo.GetByID("timeout-test-1")
+		got, _ = repo.GetByID(context.Background(), "timeout-test-1")
 		if got != nil && got.Status == "failed" {
 			break
 		}

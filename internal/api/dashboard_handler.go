@@ -21,13 +21,14 @@ func NewDashboardHandler(taskRepo *db.TaskRepo, agentRepo *db.AgentRepo, staleAg
 // Dashboard returns task counts grouped by status.
 // GET /dashboard
 func (h *DashboardHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
-	counts, err := h.taskRepo.GetTaskCounts()
+	ctx := r.Context()
+	counts, err := h.taskRepo.GetTaskCounts(ctx)
 	if err != nil {
 		WriteErrorSafe(w, 500, "counts_failed", err)
 		return
 	}
 
-	tasks, err := h.taskRepo.List("", "")
+	tasks, err := h.taskRepo.List(ctx, "", "")
 	if err != nil {
 		WriteErrorSafe(w, 500, "list_failed", err)
 		return
@@ -39,7 +40,7 @@ func (h *DashboardHandler) Dashboard(w http.ResponseWriter, r *http.Request) {
 	staleCount := 0
 	if h.staleAgentMin > 0 && h.agentRepo != nil {
 		staleDur := time.Duration(h.staleAgentMin) * time.Minute
-		staleAgents, err := h.agentRepo.ListStale(staleDur)
+		staleAgents, err := h.agentRepo.ListStale(ctx, staleDur)
 		if err == nil {
 			staleCount = len(staleAgents)
 		}

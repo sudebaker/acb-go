@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -12,11 +13,11 @@ func TestUpsertAndGetAgent(t *testing.T) {
 	repo := NewAgentRepo(db)
 
 	agent := &models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_123"}
-	if err := repo.UpsertAgent(agent); err != nil {
+	if err := repo.UpsertAgent(context.Background(), agent); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := repo.GetByName("agent-alpha")
+	got, err := repo.GetByName(context.Background(), "agent-alpha")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,10 +33,10 @@ func TestUpsertAgent_UpdateExisting(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_123"})
-	repo.UpsertAgent(&models.Agent{Name: "agent-alpha", Port: 8082, Token: "tok_456"})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_123"})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-alpha", Port: 8082, Token: "tok_456"})
 
-	got, _ := repo.GetByName("agent-alpha")
+	got, _ := repo.GetByName(context.Background(), "agent-alpha")
 	if got.Port != 8082 {
 		t.Errorf("got %+v", got)
 	}
@@ -45,9 +46,9 @@ func TestGetByToken(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_12345"})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_12345"})
 
-	got, err := repo.GetByToken("tok_12345")
+	got, err := repo.GetByToken(context.Background(), "tok_12345")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -63,7 +64,7 @@ func TestGetByToken_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	got, err := repo.GetByToken("nonexistent")
+	got, err := repo.GetByToken(context.Background(), "nonexistent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +77,7 @@ func TestGetByName_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	got, err := repo.GetByName("nonexistent")
+	got, err := repo.GetByName(context.Background(), "nonexistent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,13 +89,13 @@ func TestGetByName_NotFound(t *testing.T) {
 func TestUpdateHeartbeat(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
-	repo.UpsertAgent(&models.Agent{Name: "agent-alpha", Port: 8081})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-alpha", Port: 8081})
 
-	if err := repo.UpdateHeartbeat("agent-alpha"); err != nil {
+	if err := repo.UpdateHeartbeat(context.Background(), "agent-alpha"); err != nil {
 		t.Fatal(err)
 	}
 
-	got, _ := repo.GetByName("agent-alpha")
+	got, _ := repo.GetByName(context.Background(), "agent-alpha")
 	if got.LastHeartbeat == nil {
 		t.Error("expected heartbeat to be set")
 	}
@@ -107,7 +108,7 @@ func TestUpdateHeartbeat_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	if err := repo.UpdateHeartbeat("nonexistent"); err == nil {
+	if err := repo.UpdateHeartbeat(context.Background(), "nonexistent"); err == nil {
 		t.Error("expected error for nonexistent agent")
 	}
 }
@@ -115,11 +116,11 @@ func TestUpdateHeartbeat_NotFound(t *testing.T) {
 func TestListStale(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
-	repo.UpsertAgent(&models.Agent{Name: "agent-alpha", Port: 8081})
-	repo.UpsertAgent(&models.Agent{Name: "agent-beta", Port: 8082})
-	repo.UpdateHeartbeat("agent-beta")
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-alpha", Port: 8081})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-beta", Port: 8082})
+	repo.UpdateHeartbeat(context.Background(), "agent-beta")
 
-	stale, err := repo.ListStale(1 * time.Hour)
+	stale, err := repo.ListStale(context.Background(), 1 * time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,11 +141,11 @@ func TestUpsertAgentWithSkills(t *testing.T) {
 	repo := NewAgentRepo(db)
 
 	agent := &models.Agent{Name: "agent-python", Port: 8081, Skills: []string{"python", "sql", "api"}}
-	if err := repo.UpsertAgent(agent); err != nil {
+	if err := repo.UpsertAgent(context.Background(), agent); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := repo.GetByName("agent-python")
+	got, err := repo.GetByName(context.Background(), "agent-python")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,9 +170,9 @@ func TestGetByTokenWithSkills(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "agent-js", Port: 8081, Token: "tok_js_abc", Skills: []string{"javascript", "node"}})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-js", Port: 8081, Token: "tok_js_abc", Skills: []string{"javascript", "node"}})
 
-	got, err := repo.GetByToken("tok_js_abc")
+	got, err := repo.GetByToken(context.Background(), "tok_js_abc")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,9 +185,9 @@ func TestGetSkills(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "agent-rust", Port: 8081, Skills: []string{"rust", "tokio"}})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-rust", Port: 8081, Skills: []string{"rust", "tokio"}})
 
-	skills, err := repo.GetSkills("agent-rust")
+	skills, err := repo.GetSkills(context.Background(), "agent-rust")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -199,10 +200,10 @@ func TestHasRequiredSkills(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "agent-fullstack", Port: 8081, Skills: []string{"python", "javascript", "sql"}})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-fullstack", Port: 8081, Skills: []string{"python", "javascript", "sql"}})
 
 	task := &models.Task{RequiredSkills: []string{"python", "sql"}}
-	has, err := repo.HasRequiredSkills("agent-fullstack", task.RequiredSkills)
+	has, err := repo.HasRequiredSkills(context.Background(), "agent-fullstack", task.RequiredSkills)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -211,7 +212,7 @@ func TestHasRequiredSkills(t *testing.T) {
 	}
 
 	task.RequiredSkills = []string{"python", "rust"}
-	has, _ = repo.HasRequiredSkills("agent-fullstack", task.RequiredSkills)
+	has, _ = repo.HasRequiredSkills(context.Background(), "agent-fullstack", task.RequiredSkills)
 	if has {
 		t.Error("expected agent NOT to have rust skill")
 	}
@@ -229,11 +230,11 @@ func TestUpsertAgentWithWebhook(t *testing.T) {
 		WebhookURL:    "http://localhost:8645/webhooks/amanda",
 		WebhookSecret: "secret-123",
 	}
-	if err := repo.UpsertAgent(agent); err != nil {
+	if err := repo.UpsertAgent(context.Background(), agent); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := repo.GetByName("webhook-agent")
+	got, err := repo.GetByName(context.Background(), "webhook-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,12 +265,12 @@ func TestFindMatchingAgents(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)
 
-	repo.UpsertAgent(&models.Agent{Name: "go-agent", Port: 8081, Skills: []string{"go", "testing"}})
-	repo.UpsertAgent(&models.Agent{Name: "python-agent", Port: 8082, Skills: []string{"python", "sql"}})
-	repo.UpsertAgent(&models.Agent{Name: "fullstack", Port: 8083, Skills: []string{"go", "python", "sql"}})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "go-agent", Port: 8081, Skills: []string{"go", "testing"}})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "python-agent", Port: 8082, Skills: []string{"python", "sql"}})
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "fullstack", Port: 8083, Skills: []string{"go", "python", "sql"}})
 
 	// Find agents with "go" skill
-	agents, err := repo.FindMatchingAgents([]string{"go"})
+	agents, err := repo.FindMatchingAgents(context.Background(), []string{"go"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -278,7 +279,7 @@ func TestFindMatchingAgents(t *testing.T) {
 	}
 
 	// Find agents with all skills
-	agents, err = repo.FindMatchingAgents([]string{"go", "python"})
+	agents, err = repo.FindMatchingAgents(context.Background(), []string{"go", "python"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +288,7 @@ func TestFindMatchingAgents(t *testing.T) {
 	}
 
 	// Find agents with empty required skills (all agents)
-	agents, err = repo.FindMatchingAgents(nil)
+	agents, err = repo.FindMatchingAgents(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +297,7 @@ func TestFindMatchingAgents(t *testing.T) {
 	}
 
 	// Find agents with non-existent skill
-	agents, err = repo.FindMatchingAgents([]string{"rust"})
+	agents, err = repo.FindMatchingAgents(context.Background(), []string{"rust"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"context"
 	"fmt"
 
 	"github.com/sudebaker/acb-go/internal/models"
@@ -15,8 +16,8 @@ func NewTaskEventRepo(db *sql.DB) *TaskEventRepo {
 	return &TaskEventRepo{db: db}
 }
 
-func (r *TaskEventRepo) InsertEvent(taskID, event, agent, detail string) error {
-	_, err := r.db.Exec(
+func (r *TaskEventRepo) InsertEvent(ctx context.Context, taskID, event, agent, detail string) error {
+	_, err := r.db.ExecContext(ctx, 
 		`INSERT INTO task_events (task_id, event, agent, detail) VALUES ($1, $2, $3, $4)`,
 		taskID, event, agent, detail,
 	)
@@ -26,8 +27,8 @@ func (r *TaskEventRepo) InsertEvent(taskID, event, agent, detail string) error {
 	return nil
 }
 
-func (r *TaskEventRepo) ListByTask(taskID string) ([]models.TaskEvent, error) {
-	rows, err := r.db.Query(
+func (r *TaskEventRepo) ListByTask(ctx context.Context, taskID string) ([]models.TaskEvent, error) {
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT task_id, event, agent, timestamp, detail
 		 FROM task_events
 		 WHERE task_id = $1

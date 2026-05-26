@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -33,13 +34,13 @@ func init() {
 	}
 
 	log.Info().Msg("Admin token generated for bootstrap authentication")
-	log.Warn().Msg("ADMIN TOKEN generated — save it now. It will change on next restart. Check startup logs for the next occurrence.")
-	log.Debug().Str("token", adminToken).Msg("Admin token for bootstrap authentication (visible only with debug logging)")
+	fmt.Fprintf(os.Stderr, "\n=== ADMIN TOKEN (save it now, will change on next restart): %s ===\n\n", adminToken)
 }
 
 func AuthMiddleware(repo *db.AgentRepo) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := r.Context()
 			if r.URL.Path == "/health" || r.URL.Path == "/health/" {
 				next.ServeHTTP(w, r)
 				return
@@ -62,7 +63,7 @@ func AuthMiddleware(repo *db.AgentRepo) func(http.Handler) http.Handler {
 			}
 
 			// Try agent token (normal flow) - no timing leak since admin check is first
-			agent, err := repo.GetByToken(token)
+			agent, err := repo.GetByToken(ctx, token)
 			if err == nil && agent != nil {
 				r.Header.Set("X-Agent-Name", agent.Name)
 				next.ServeHTTP(w, r)

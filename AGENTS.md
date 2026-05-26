@@ -56,7 +56,7 @@ go build ./...               # verify compilation
 ```
 
 ## Testing quirks
-- All db tests use `t.TempDir()` for isolated SQLite files
+- All db tests use PostgreSQL via `pgx`; set `ACB_PG_HOST`/`ACB_PG_PORT` env vars (default `localhost:5433`)
 - API tests register a test agent (`test-agent` / `test-token`) for auth; use `authRequest()` helper
 - Redis tests are nil-safe (no Redis server needed for CI)
 - e2e test does NOT require Redis or RustFS (publisher handles nil client)
@@ -65,8 +65,8 @@ go build ./...               # verify compilation
 - Webhook URL validation prevents SSRF (rejects private IPs, enforces http/https scheme)
 - Agent registration checks X-Agent-Name to prevent token overwrite
 - HMAC webhook signatures include timestamp for replay protection
-- Tokens stored in plaintext (S01 — needs Argon2id hashing)
-- Redis has no auth by default (S03 — needs ACB_REDIS_PASS requirement)
+- Tokens hashed with Argon2id before storage (S01 — resolved)
+- Redis password warning logged at startup if ACB_REDIS_PASS is empty (S03 — mitigated)
 
 ## Prerequisites
 - Go 1.22+ (CGO required for `go-sqlite3`)

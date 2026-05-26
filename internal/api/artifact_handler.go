@@ -22,9 +22,10 @@ type ArtifactHandler struct {
 }
 
 func (h *ArtifactHandler) UploadArtifact(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	taskID := chi.URLParam(r, "id")
 
-	task, err := h.taskRepo.GetByID(taskID)
+	task, err := h.taskRepo.GetByID(ctx, taskID)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -77,7 +78,7 @@ func (h *ArtifactHandler) UploadArtifact(w http.ResponseWriter, r *http.Request)
 		ContentType: contentType,
 	}
 
-	if err := h.taskRepo.AddArtifact(taskID, artifact); err != nil {
+	if err := h.taskRepo.AddArtifact(ctx, taskID, artifact); err != nil {
 		WriteErrorSafe(w, 500, "add_artifact_failed", err)
 		return
 	}
@@ -94,9 +95,10 @@ func (h *ArtifactHandler) DispatchListOrDownload(w http.ResponseWriter, r *http.
 }
 
 func (h *ArtifactHandler) ListArtifacts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	taskID := chi.URLParam(r, "id")
 
-	task, err := h.taskRepo.GetByID(taskID)
+	task, err := h.taskRepo.GetByID(ctx, taskID)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -106,7 +108,7 @@ func (h *ArtifactHandler) ListArtifacts(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	artifacts, err := h.taskRepo.GetArtifacts(taskID)
+	artifacts, err := h.taskRepo.GetArtifacts(ctx, taskID)
 	if err != nil {
 		WriteErrorSafe(w, 500, "list_failed", err)
 		return
@@ -120,6 +122,7 @@ func (h *ArtifactHandler) ListArtifacts(w http.ResponseWriter, r *http.Request) 
 }
 
 func (h *ArtifactHandler) DownloadArtifact(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	taskID := chi.URLParam(r, "id")
 	key := r.URL.Query().Get("key")
 
@@ -128,7 +131,7 @@ func (h *ArtifactHandler) DownloadArtifact(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	task, err := h.taskRepo.GetByID(taskID)
+	task, err := h.taskRepo.GetByID(ctx, taskID)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -160,6 +163,7 @@ func (h *ArtifactHandler) DownloadArtifact(w http.ResponseWriter, r *http.Reques
 }
 
 func (h *ArtifactHandler) DeleteArtifact(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	taskID := chi.URLParam(r, "id")
 	key := r.URL.Query().Get("key")
 
@@ -168,7 +172,7 @@ func (h *ArtifactHandler) DeleteArtifact(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	task, err := h.taskRepo.GetByID(taskID)
+	task, err := h.taskRepo.GetByID(ctx, taskID)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -193,7 +197,7 @@ func (h *ArtifactHandler) DeleteArtifact(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	if err := h.taskRepo.RemoveArtifact(taskID, key); err != nil {
+	if err := h.taskRepo.RemoveArtifact(ctx, taskID, key); err != nil {
 		WriteErrorSafe(w, 500, "remove_artifact_failed", err)
 		return
 	}
@@ -202,9 +206,10 @@ func (h *ArtifactHandler) DeleteArtifact(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *ArtifactHandler) CleanupArtifacts(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	taskID := chi.URLParam(r, "id")
 
-	task, err := h.taskRepo.GetByID(taskID)
+	task, err := h.taskRepo.GetByID(ctx, taskID)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -236,7 +241,7 @@ func (h *ArtifactHandler) CleanupArtifacts(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Clear artifacts in DB
-	if err := h.taskRepo.SetArtifactsJSON(taskID, "[]"); err != nil {
+	if err := h.taskRepo.SetArtifactsJSON(ctx, taskID, "[]"); err != nil {
 		WriteErrorSafe(w, 500, "clear_artifacts_failed", err)
 		return
 	}

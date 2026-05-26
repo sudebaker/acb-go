@@ -1,6 +1,7 @@
 package tests_test
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -87,7 +88,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 	gateRepo := db.NewGateRepo(d)
 	agentRepo := db.NewAgentRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "worker-a", Token: "e2e-token"})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "worker-a", Token: "e2e-token"})
 
 	r := api.NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
 
@@ -147,8 +148,8 @@ func TestFullTaskLifecycle(t *testing.T) {
 
 	// POST /tasks/:id/unblock → 200, status=in_progress
 	// Gate was created by block; transition it to answered
-	d.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "g001")
-	gateRepo.AnswerGate("g001", "yes")
+	gateRepo.AskGate(context.Background(), "g001")
+	gateRepo.AnswerGate(context.Background(), "g001", "yes")
 
 	req = auth("POST", "/tasks/t001/unblock", `{"gate_id":"g001"}`)
 	w = exec(req)

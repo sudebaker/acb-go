@@ -17,21 +17,25 @@ var (
 	cipherErr     error
 )
 
-// initCipher initializes the AES-GCM cipher from WEBHOOK_SECRET_KEY env var.
+// initCipher initializes the AES-GCM cipher from ACB_WEBHOOK_SECRET_KEY env var.
+// Falls back to WEBHOOK_SECRET_KEY for backward compatibility.
 // Returns error if key is not set or invalid.
 func initCipher() error {
-	key := os.Getenv("WEBHOOK_SECRET_KEY")
+	key := os.Getenv("ACB_WEBHOOK_SECRET_KEY")
 	if key == "" {
-		return fmt.Errorf("WEBHOOK_SECRET_KEY not set")
+		key = os.Getenv("WEBHOOK_SECRET_KEY") // backward compat
+	}
+	if key == "" {
+		return fmt.Errorf("ACB_WEBHOOK_SECRET_KEY not set")
 	}
 
 	keyBytes, err := base64.StdEncoding.DecodeString(key)
 	if err != nil {
-		return fmt.Errorf("decode WEBHOOK_SECRET_KEY: %w", err)
+		return fmt.Errorf("decode ACB_WEBHOOK_SECRET_KEY: %w", err)
 	}
 
 	if len(keyBytes) != 32 {
-		return fmt.Errorf("WEBHOOK_SECRET_KEY must be 32 bytes (256-bit), got %d", len(keyBytes))
+		return fmt.Errorf("ACB_WEBHOOK_SECRET_KEY must be 32 bytes (256-bit), got %d", len(keyBytes))
 	}
 
 	block, err := aes.NewCipher(keyBytes)

@@ -93,7 +93,7 @@ func setupRouterWithRustFS(t *testing.T) (*db.TaskRepo, *rustfs.Client, http.Han
 	taskRepo := db.NewTaskRepo(d)
 	gateRepo := db.NewGateRepo(d)
 	agentRepo := db.NewAgentRepo(d)
-	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Token: testToken})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
 	memStore := newHandlerMemStore()
 	rustfsClient := rustfs.NewClientWithStore(memStore, "test-bucket")
@@ -105,7 +105,7 @@ func setupRouterWithRustFS(t *testing.T) (*db.TaskRepo, *rustfs.Client, http.Han
 
 func TestUploadArtifact_201(t *testing.T) {
 	taskRepo, _, r, _ := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -158,7 +158,7 @@ func TestUploadArtifact_TaskNotFound_404(t *testing.T) {
 
 func TestUploadArtifact_EmptyFile_400(t *testing.T) {
 	taskRepo, _, r, _ := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
@@ -178,10 +178,10 @@ func TestUploadArtifact_EmptyFile_400(t *testing.T) {
 
 func TestListArtifacts_200(t *testing.T) {
 	taskRepo, _, r, memStore := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	memStore.Upload(context.Background(), "t001/uuid-file1.txt", bytes.NewReader([]byte("a")), 1, "text/plain")
-	taskRepo.AddArtifact("t001", models.Artifact{Key: "t001/uuid-file1.txt", Size: 1, ContentType: "text/plain"})
+	taskRepo.AddArtifact(context.Background(), "t001", models.Artifact{Key: "t001/uuid-file1.txt", Size: 1, ContentType: "text/plain"})
 
 	req := authRequest("GET", "/tasks/t001/artifacts", "")
 	wResp := httptest.NewRecorder()
@@ -202,7 +202,7 @@ func TestListArtifacts_200(t *testing.T) {
 
 func TestListArtifacts_Empty_200(t *testing.T) {
 	taskRepo, _, r, _ := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	req := authRequest("GET", "/tasks/t001/artifacts", "")
 	wResp := httptest.NewRecorder()
@@ -221,7 +221,7 @@ func TestListArtifacts_Empty_200(t *testing.T) {
 
 func TestDownloadArtifact_200(t *testing.T) {
 	taskRepo, _, r, memStore := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	memStore.Upload(context.Background(), "t001/uuid-file.txt", bytes.NewReader([]byte("hello")), 5, "text/plain")
 
@@ -241,7 +241,7 @@ func TestDownloadArtifact_200(t *testing.T) {
 
 func TestDownloadArtifact_NotFound_404(t *testing.T) {
 	taskRepo, _, r, _ := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	req := authRequest("GET", "/tasks/t001/artifacts?key=nonexistent", "")
 	wResp := httptest.NewRecorder()
@@ -254,10 +254,10 @@ func TestDownloadArtifact_NotFound_404(t *testing.T) {
 
 func TestDeleteArtifact_204(t *testing.T) {
 	taskRepo, _, r, memStore := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	memStore.Upload(context.Background(), "t001/uuid-file.txt", bytes.NewReader([]byte("x")), 1, "text/plain")
-	taskRepo.AddArtifact("t001", models.Artifact{Key: "t001/uuid-file.txt", Size: 1, ContentType: "text/plain"})
+	taskRepo.AddArtifact(context.Background(), "t001", models.Artifact{Key: "t001/uuid-file.txt", Size: 1, ContentType: "text/plain"})
 
 	req := authRequest("DELETE", "/tasks/t001/artifacts?key=t001%2Fuuid-file.txt", "")
 	wResp := httptest.NewRecorder()
@@ -280,7 +280,7 @@ func TestDeleteArtifact_204(t *testing.T) {
 
 func TestDeleteArtifact_NotFound_404(t *testing.T) {
 	taskRepo, _, r, _ := setupRouterWithRustFS(t)
-	taskRepo.Create(&models.Task{ID: "t001", Title: "test"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
 	req := authRequest("DELETE", "/tasks/t001/artifacts?key=nonexistent", "")
 	wResp := httptest.NewRecorder()

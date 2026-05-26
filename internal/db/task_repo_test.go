@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -20,11 +21,11 @@ func TestCreateAndGetTask(t *testing.T) {
 		BodyGoal: "Run the test suite",
 	}
 
-	if err := repo.Create(task); err != nil {
+	if err := repo.Create(context.Background(), task); err != nil {
 		t.Fatal(err)
 	}
 
-	got, err := repo.GetByID("t_test_001")
+	got, err := repo.GetByID(context.Background(), "t_test_001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,12 +47,12 @@ func TestCreateAndGetTask(t *testing.T) {
 func TestClaimTask_Valid(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
-	if _, err := repo.ClaimTask("t001", "worker-a"); err != nil {
+	if _, err := repo.ClaimTask(context.Background(), "t001", "worker-a"); err != nil {
 		t.Fatal(err)
 	}
-	task, _ := repo.GetByID("t001")
+	task, _ := repo.GetByID(context.Background(), "t001")
 	if task.Status != "claimed" || task.Assignee != "worker-a" {
 		t.Errorf("got status=%q assignee=%q", task.Status, task.Assignee)
 	}
@@ -64,10 +65,10 @@ func TestClaimTask_Valid(t *testing.T) {
 func TestClaimTask_AlreadyClaimed(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
-	repo.ClaimTask("t001", "worker-a")
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	repo.ClaimTask(context.Background(), "t001", "worker-a")
 
-	_, err := repo.ClaimTask("t001", "worker-b")
+	_, err := repo.ClaimTask(context.Background(), "t001", "worker-b")
 	if err == nil {
 		t.Fatal("expected error claiming already-claimed task")
 	}
@@ -83,13 +84,13 @@ func TestClaimTask_AlreadyClaimed(t *testing.T) {
 func TestStartTask(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
-	repo.ClaimTask("t001", "worker-a")
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	repo.ClaimTask(context.Background(), "t001", "worker-a")
 
-	if _, err := repo.StartTask("t001"); err != nil {
+	if _, err := repo.StartTask(context.Background(), "t001"); err != nil {
 		t.Fatal(err)
 	}
-	task, _ := repo.GetByID("t001")
+	task, _ := repo.GetByID(context.Background(), "t001")
 	if task.Status != "in_progress" {
 		t.Errorf("got status %q", task.Status)
 	}
@@ -98,9 +99,9 @@ func TestStartTask(t *testing.T) {
 func TestStartTask_NotClaimed(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
-	_, err := repo.StartTask("t001")
+	_, err := repo.StartTask(context.Background(), "t001")
 	if err == nil {
 		t.Fatal("expected error starting pending task")
 	}
@@ -116,14 +117,14 @@ func TestStartTask_NotClaimed(t *testing.T) {
 func TestBlockTask(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
-	repo.ClaimTask("t001", "worker-a")
-	repo.StartTask("t001")
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	repo.ClaimTask(context.Background(), "t001", "worker-a")
+	repo.StartTask(context.Background(), "t001")
 
-	if _, err := repo.BlockTask("t001"); err != nil {
+	if _, err := repo.BlockTask(context.Background(), "t001"); err != nil {
 		t.Fatal(err)
 	}
-	task, _ := repo.GetByID("t001")
+	task, _ := repo.GetByID(context.Background(), "t001")
 	if task.Status != "blocked" {
 		t.Errorf("got status %q", task.Status)
 	}
@@ -132,14 +133,14 @@ func TestBlockTask(t *testing.T) {
 func TestCompleteTask(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
-	repo.ClaimTask("t001", "worker-a")
-	repo.StartTask("t001")
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	repo.ClaimTask(context.Background(), "t001", "worker-a")
+	repo.StartTask(context.Background(), "t001")
 
-	if _, err := repo.CompleteTask("t001", "done"); err != nil {
+	if _, err := repo.CompleteTask(context.Background(), "t001", "done"); err != nil {
 		t.Fatal(err)
 	}
-	task, _ := repo.GetByID("t001")
+	task, _ := repo.GetByID(context.Background(), "t001")
 	if task.Status != "completed" || task.Summary != "done" {
 		t.Errorf("got status=%q summary=%q", task.Status, task.Summary)
 	}
@@ -148,14 +149,14 @@ func TestCompleteTask(t *testing.T) {
 func TestFailTask(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
-	repo.ClaimTask("t001", "worker-a")
-	repo.StartTask("t001")
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	repo.ClaimTask(context.Background(), "t001", "worker-a")
+	repo.StartTask(context.Background(), "t001")
 
-	if _, err := repo.FailTask("t001", "something broke"); err != nil {
+	if _, err := repo.FailTask(context.Background(), "t001", "something broke"); err != nil {
 		t.Fatal(err)
 	}
-	task, _ := repo.GetByID("t001")
+	task, _ := repo.GetByID(context.Background(), "t001")
 	if task.Status != "failed" {
 		t.Errorf("got status %q", task.Status)
 	}
@@ -164,9 +165,9 @@ func TestFailTask(t *testing.T) {
 func TestFailTask_WrongState(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
-	_, err := repo.FailTask("t001", "should fail")
+	_, err := repo.FailTask(context.Background(), "t001", "should fail")
 	if err == nil {
 		t.Fatal("expected error failing pending task")
 	}
@@ -182,11 +183,11 @@ func TestFailTask_WrongState(t *testing.T) {
 func TestListTasks(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "task1", Assignee: "worker-a"})
-	repo.Create(&models.Task{ID: "t002", Title: "task2", Assignee: "worker-b"})
-	repo.ClaimTask("t001", "worker-a")
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "task1", Assignee: "worker-a"})
+	repo.Create(context.Background(), &models.Task{ID: "t002", Title: "task2", Assignee: "worker-b"})
+	repo.ClaimTask(context.Background(), "t001", "worker-a")
 
-	tasks, err := repo.List("", "")
+	tasks, err := repo.List(context.Background(), "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +195,7 @@ func TestListTasks(t *testing.T) {
 		t.Errorf("expected 2 tasks, got %d", len(tasks))
 	}
 
-	pending, _ := repo.List("pending", "")
+	pending, _ := repo.List(context.Background(), "pending", "")
 	if len(pending) != 1 {
 		t.Errorf("expected 1 pending task, got %d", len(pending))
 	}
@@ -204,7 +205,7 @@ func TestUpdateStatus_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
 
-	if err := repo.UpdateStatus("nonexistent", "completed"); err == nil {
+	if err := repo.UpdateStatus(context.Background(), "nonexistent", "completed"); err == nil {
 		t.Error("expected error for nonexistent task")
 	}
 }
@@ -212,14 +213,14 @@ func TestUpdateStatus_NotFound(t *testing.T) {
 func TestAddAndGetArtifacts(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
-	err := repo.AddArtifact("t001", models.Artifact{Key: "report.pdf", Bucket: "acb-artifacts", Size: 12345, ContentType: "application/pdf"})
+	err := repo.AddArtifact(context.Background(), "t001", models.Artifact{Key: "report.pdf", Bucket: "acb-artifacts", Size: 12345, ContentType: "application/pdf"})
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	artifacts, err := repo.GetArtifacts("t001")
+	artifacts, err := repo.GetArtifacts(context.Background(), "t001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -237,12 +238,12 @@ func TestAddAndGetArtifacts(t *testing.T) {
 func TestAddMultipleArtifacts(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
-	repo.AddArtifact("t001", models.Artifact{Key: "a.txt", Size: 10})
-	repo.AddArtifact("t001", models.Artifact{Key: "b.txt", Size: 20})
+	repo.AddArtifact(context.Background(), "t001", models.Artifact{Key: "a.txt", Size: 10})
+	repo.AddArtifact(context.Background(), "t001", models.Artifact{Key: "b.txt", Size: 20})
 
-	artifacts, err := repo.GetArtifacts("t001")
+	artifacts, err := repo.GetArtifacts(context.Background(), "t001")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -254,16 +255,16 @@ func TestAddMultipleArtifacts(t *testing.T) {
 func TestRemoveArtifact(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
-	repo.AddArtifact("t001", models.Artifact{Key: "a.txt", Size: 10})
-	repo.AddArtifact("t001", models.Artifact{Key: "b.txt", Size: 20})
+	repo.AddArtifact(context.Background(), "t001", models.Artifact{Key: "a.txt", Size: 10})
+	repo.AddArtifact(context.Background(), "t001", models.Artifact{Key: "b.txt", Size: 20})
 
-	if err := repo.RemoveArtifact("t001", "a.txt"); err != nil {
+	if err := repo.RemoveArtifact(context.Background(), "t001", "a.txt"); err != nil {
 		t.Fatal(err)
 	}
 
-	artifacts, _ := repo.GetArtifacts("t001")
+	artifacts, _ := repo.GetArtifacts(context.Background(), "t001")
 	if len(artifacts) != 1 {
 		t.Fatalf("expected 1 artifact, got %d", len(artifacts))
 	}
@@ -275,9 +276,9 @@ func TestRemoveArtifact(t *testing.T) {
 func TestRemoveArtifact_NotFound(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "test"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
 
-	if err := repo.RemoveArtifact("t001", "nonexistent"); err != nil {
+	if err := repo.RemoveArtifact(context.Background(), "t001", "nonexistent"); err != nil {
 		t.Errorf("expected nil for nonexistent key, got %v", err)
 	}
 }
@@ -286,7 +287,7 @@ func TestAddArtifact_NonexistentTask(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
 
-	err := repo.AddArtifact("nonexistent", models.Artifact{Key: "x"})
+	err := repo.AddArtifact(context.Background(), "nonexistent", models.Artifact{Key: "x"})
 	if err == nil {
 		t.Error("expected error for nonexistent task")
 	}
@@ -295,10 +296,10 @@ func TestAddArtifact_NonexistentTask(t *testing.T) {
 func TestGetPendingByAgent(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "task1", Assignee: "worker-a"})
-	repo.Create(&models.Task{ID: "t002", Title: "task2", Assignee: "worker-a"})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "task1", Assignee: "worker-a"})
+	repo.Create(context.Background(), &models.Task{ID: "t002", Title: "task2", Assignee: "worker-a"})
 
-	tasks, err := repo.GetPendingByAgent("worker-a")
+	tasks, err := repo.GetPendingByAgent(context.Background(), "worker-a")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,11 +311,11 @@ func TestGetPendingByAgent(t *testing.T) {
 func TestListTasks_WithRequiredSkills(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
-	repo.Create(&models.Task{ID: "t001", Title: "task1", Skills: []string{"python", "sql"}, RequiredSkills: []string{"python", "sql"}})
-	repo.Create(&models.Task{ID: "t002", Title: "task2", Skills: []string{"javascript"}, RequiredSkills: []string{"javascript"}})
+	repo.Create(context.Background(), &models.Task{ID: "t001", Title: "task1", Skills: []string{"python", "sql"}, RequiredSkills: []string{"python", "sql"}})
+	repo.Create(context.Background(), &models.Task{ID: "t002", Title: "task2", Skills: []string{"javascript"}, RequiredSkills: []string{"javascript"}})
 
 	// Should get 0 tasks with required skills "python" (Tasks don't have those skills)
-	tasks, err := repo.List("", "", []string{"python"}...)
+	tasks, err := repo.List(context.Background(), "", "", []string{"python"}...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -327,7 +328,7 @@ func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
 	testDB := setupTestDB(t)
 	// Create parent task first to satisfy FK constraint
 	taskRepo := NewTaskRepo(testDB)
-	if err := taskRepo.Create(&models.Task{ID: "task-001", Title: "parent task"}); err != nil {
+	if err := taskRepo.Create(context.Background(), &models.Task{ID: "task-001", Title: "parent task"}); err != nil {
 		t.Fatalf("failed to create parent task: %v", err)
 	}
 	repo := NewGateRepo(testDB)
@@ -340,13 +341,13 @@ func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
 		Status:   "pending",
 	}
 
-	err := repo.CreateGate(gate)
+	err := repo.CreateGate(context.Background(), gate)
 	if err != nil {
 		t.Fatalf("failed to create gate: %v", err)
 	}
 
 	// Gate should have created_at
-	gates, err := repo.GetByTaskID("task-001")
+	gates, err := repo.GetByTaskID(context.Background(), "task-001")
 	if err != nil {
 		t.Fatalf("failed to get gates: %v", err)
 	}
@@ -361,19 +362,19 @@ func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
 	}
 
 	// Transition gate to 'asked' status, then answer it
-	_, err = testDB.Exec("UPDATE gates SET status = 'asked' WHERE gate_id = $1", "gate-001")
+	err = repo.AskGate(context.Background(), "gate-001")
 	if err != nil {
 		t.Fatalf("failed to set gate status to asked: %v", err)
 	}
 
 	// Answer the gate
-	err = repo.AnswerGate("gate-001", "Yes, it is valid")
+	err = repo.AnswerGate(context.Background(), "gate-001", "Yes, it is valid")
 	if err != nil {
 		t.Fatalf("failed to answer gate: %v", err)
 	}
 
 	// Check answered_at is set
-	gates, err = repo.GetByTaskID("task-001")
+	gates, err = repo.GetByTaskID(context.Background(), "task-001")
 	if err != nil {
 		t.Fatalf("failed to get gates: %v", err)
 	}
@@ -391,13 +392,13 @@ func TestTaskEventsLoggedOnTransitions(t *testing.T) {
 
 	// Create task
 	task := &models.Task{ID: "t_events_001", Title: "test event logging"}
-	err := repo.Create(task)
+	err := repo.Create(context.Background(), task)
 	if err != nil {
 		t.Fatalf("failed to create task: %v", err)
 	}
 
 	// Claim task - should log event
-	task, err = repo.ClaimTask("t_events_001", "agent-alpha")
+	task, err = repo.ClaimTask(context.Background(), "t_events_001", "agent-alpha")
 	if err != nil {
 		t.Fatalf("failed to claim task: %v", err)
 	}
@@ -405,7 +406,7 @@ func TestTaskEventsLoggedOnTransitions(t *testing.T) {
 	// Wait for async event logging
 	time.Sleep(50 * time.Millisecond)
 
-	events, err := eventRepo.ListByTask("t_events_001")
+	events, err := eventRepo.ListByTask(context.Background(), "t_events_001")
 	if err != nil {
 		t.Fatalf("failed to list events: %v", err)
 	}
@@ -414,14 +415,14 @@ func TestTaskEventsLoggedOnTransitions(t *testing.T) {
 	}
 
 	// Start task - should log event
-	task, err = repo.StartTask("t_events_001")
+	task, err = repo.StartTask(context.Background(), "t_events_001")
 	if err != nil {
 		t.Fatalf("failed to start task: %v", err)
 	}
 
 	time.Sleep(50 * time.Millisecond)
 
-	events, err = eventRepo.ListByTask("t_events_001")
+	events, err = eventRepo.ListByTask(context.Background(), "t_events_001")
 	if err != nil {
 		t.Fatalf("failed to list events: %v", err)
 	}
@@ -430,14 +431,14 @@ func TestTaskEventsLoggedOnTransitions(t *testing.T) {
 	}
 
 	// Block task - should log event
-	task, err = repo.BlockTask("t_events_001")
+	task, err = repo.BlockTask(context.Background(), "t_events_001")
 	if err != nil {
 		t.Fatalf("failed to block task: %v", err)
 	}
 
 	time.Sleep(50 * time.Millisecond)
 
-	events, err = eventRepo.ListByTask("t_events_001")
+	events, err = eventRepo.ListByTask(context.Background(), "t_events_001")
 	if err != nil {
 		t.Fatalf("failed to list events: %v", err)
 	}

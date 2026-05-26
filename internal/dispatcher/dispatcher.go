@@ -20,10 +20,11 @@ import (
 )
 
 const (
-	retryQueuePrefix = "acb:retry:"
-	maxRetries       = 5
-	httpTimeout      = 15 * time.Second // total timeout
-	httpConnectTimeout = 5 * time.Second // TCP connect alone
+	retryQueuePrefix   = "acb:retry:"
+	maxRetries         = 5
+	maxRetryQueueSize  = 1000
+	httpTimeout        = 15 * time.Second // total timeout
+	httpConnectTimeout = 5 * time.Second  // TCP connect alone
 )
 
 // retryEntry stores a pending retry in Redis.
@@ -93,10 +94,11 @@ func (d *Dispatcher) Stop() {
 // It finds matching agents and POSTs the task to their webhook URLs.
 // Skips tasks whose parent tasks are not completed.
 func (d *Dispatcher) DispatchNewTask(task *models.Task) {
+	ctx := context.Background()
 	// Skip tasks with uncompleted parents
 	if len(task.Parents) > 0 {
 		for _, parentID := range task.Parents {
-			parent, err := d.taskRepo.GetByID(parentID)
+			parent, err := d.taskRepo.GetByID(ctx, parentID)
 			if err != nil || parent == nil || parent.Status != "completed" {
 				log.Printf("[dispatcher] task %s has uncompleted parent %s, skipping dispatch", task.ID, parentID)
 				return
@@ -104,7 +106,7 @@ func (d *Dispatcher) DispatchNewTask(task *models.Task) {
 		}
 	}
 
-	agents, err := d.agentRepo.FindMatchingAgents(task.RequiredSkills)
+	agents, err := d.agentRepo.FindMatchingAgents(ctx, task.RequiredSkills)
 	if err != nil {
 		log.Printf("[dispatcher] error finding matching agents: %v", err)
 		return
@@ -122,11 +124,12 @@ func (d *Dispatcher) DispatchNewTask(task *models.Task) {
 // NotifyStatusChange sends a webhook to the assigned agent when task status changes.
 // Actions: "task_claimed", "task_started", "task_blocked", "task_completed", "task_failed"
 func (d *Dispatcher) NotifyStatusChange(task *models.Task, oldStatus, newStatus, action string) {
+	ctx := context.Background()
 	if task.Assignee == "" {
 		return // No agent to notify
 	}
 
-	agent, err := d.agentRepo.GetByName(task.Assignee)
+	agent, err := d.agentRepo.GetByName(ctx, task.Assignee)
 	if err != nil {
 		log.Printf("[dispatcher] error getting agent %s: %v", task.Assignee, err)
 		return
@@ -135,7 +138,11 @@ func (d *Dispatcher) NotifyStatusChange(task *models.Task, oldStatus, newStatus,
 		return // Agent not found or no webhook configured
 	}
 
-	go d.sendStatusWebhook(*agent, task, oldStatus, newStatus, action)
+	d.wg.Add(1)
+	go func() {
+		defer d.wg.Done()
+		d.sendStatusWebhook(*agent, task, oldStatus, newStatus, action)
+	}()
 }
 
 // sendStatusWebhook sends a status change notification to a single agent.
@@ -212,6 +219,8 @@ func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, ol
 // On failure, it enqueues a retry via Redis.
 // Validates webhook URL for SSRF, adds timestamp to HMAC.
 func (d *Dispatcher) sendWebhookWithSemaphore(agent models.Agent, task *models.Task, attempt int) {
+	d.wg.Add(1)
+	defer d.wg.Done()
 	d.semaphore <- struct{}{}
 	defer func() {
 		<-d.semaphore
@@ -220,8 +229,6 @@ func (d *Dispatcher) sendWebhookWithSemaphore(agent models.Agent, task *models.T
 }
 
 func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt int) {
-	d.wg.Add(1)
-	defer d.wg.Done()
 	// Validate webhook URL before sending
 	if err := ValidateWebhookURL(agent.WebhookURL); err != nil {
 		log.Printf("[dispatcher] invalid webhook URL for agent %s: %v", agent.Name, err)
@@ -297,6 +304,10 @@ func (d *Dispatcher) enqueueRetry(agentName, taskID string, attempt int) {
 		return
 	}
 	key := retryQueuePrefix + agentName
+
+	// Limit queue to prevent unbounded growth — keep the N most recent entries
+	d.rdb.LTrim(context.Background(), key, -(maxRetryQueueSize - 1), -1)
+
 	if err := d.rdb.RPush(context.Background(), key, data).Err(); err != nil {
 		log.Printf("[dispatcher] failed to enqueue retry for agent %s task %s: %v", agentName, taskID, err)
 	}
@@ -338,6 +349,7 @@ func (d *Dispatcher) processAllRetryQueues(ctx context.Context) {
 
 // retryEntry parses a retry entry and re-dispatches or gives up.
 func (d *Dispatcher) retryEntry(data string) {
+	ctx := context.Background()
 	var entry retryEntry
 	if err := json.Unmarshal([]byte(data), &entry); err != nil {
 		log.Printf("[dispatcher] invalid retry entry %q: %v", data, err)
@@ -349,7 +361,16 @@ func (d *Dispatcher) retryEntry(data string) {
 		return
 	}
 
-	task, err := d.taskRepo.GetByID(entry.TaskID)
+	// Exponential backoff capped at 30s: 1s, 2s, 4s, 8s, 16s, 30s, 30s...
+	s := 1 << uint(entry.Attempt)
+	if s > 30 {
+		s = 30
+	}
+	backoff := time.Duration(s) * time.Second
+	log.Printf("[dispatcher] retry %d/%d for task %s to agent %s (backoff %v)", entry.Attempt+1, maxRetries, entry.TaskID, entry.AgentName, backoff)
+	time.Sleep(backoff)
+
+	task, err := d.taskRepo.GetByID(ctx, entry.TaskID)
 	if err != nil || task == nil {
 		log.Printf("[dispatcher] task %s not found, skipping retry", entry.TaskID)
 		return
@@ -359,7 +380,7 @@ func (d *Dispatcher) retryEntry(data string) {
 		return
 	}
 
-	agent, err := d.agentRepo.GetByName(entry.AgentName)
+	agent, err := d.agentRepo.GetByName(ctx, entry.AgentName)
 	if err != nil || agent == nil || agent.WebhookURL == "" {
 		log.Printf("[dispatcher] agent %s not found or no webhook, skipping retry", entry.AgentName)
 		return
@@ -371,8 +392,8 @@ func (d *Dispatcher) retryEntry(data string) {
 
 // FindNextForAgent returns the best-matching pending task for the given agent name.
 // Used by the polling endpoint GET /tasks/dispatch?agent=<name>.
-func FindNextForAgent(agentRepo *db.AgentRepo, taskRepo *db.TaskRepo, agentName string) (*models.Task, error) {
-	agent, err := agentRepo.GetByName(agentName)
+func FindNextForAgent(ctx context.Context, agentRepo *db.AgentRepo, taskRepo *db.TaskRepo, agentName string) (*models.Task, error) {
+	agent, err := agentRepo.GetByName(ctx, agentName)
 	if err != nil {
 		return nil, fmt.Errorf("get agent: %w", err)
 	}
@@ -380,7 +401,7 @@ func FindNextForAgent(agentRepo *db.AgentRepo, taskRepo *db.TaskRepo, agentName 
 		return nil, nil
 	}
 
-	tasks, err := taskRepo.List("pending", "")
+	tasks, err := taskRepo.List(ctx, "pending", "")
 	if err != nil {
 		return nil, fmt.Errorf("list pending tasks: %w", err)
 	}
@@ -392,7 +413,7 @@ func FindNextForAgent(agentRepo *db.AgentRepo, taskRepo *db.TaskRepo, agentName 
 	for _, t := range tasks {
 		// Skip tasks with uncompleted parents
 		if len(t.Parents) > 0 {
-			parentsDone, err := taskRepo.AreParentsCompleted(t.Parents)
+			parentsDone, err := taskRepo.AreParentsCompleted(ctx, t.Parents)
 			if err != nil || !parentsDone {
 				continue
 			}

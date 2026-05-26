@@ -1,6 +1,7 @@
 package timeout
 
 import (
+	"context"
 	"log"
 	"sync"
 	"time"
@@ -78,8 +79,9 @@ func (s *TimeoutService) run() {
 }
 
 func (s *TimeoutService) check() {
+	ctx := context.Background()
 	if s.pendingTimeoutMin > 0 {
-		ids, err := s.repo.ExpirePendingTasks(s.pendingTimeoutMin)
+		ids, err := s.repo.ExpirePendingTasks(ctx, s.pendingTimeoutMin)
 		if err != nil {
 			log.Printf("[ERROR] TimeoutService (pending): %v", err)
 		} else if len(ids) > 0 {
@@ -88,7 +90,7 @@ func (s *TimeoutService) check() {
 	}
 
 	if s.taskTimeoutMin > 0 {
-		ids, err := s.repo.ExpireStaleInProgressTasks(s.taskTimeoutMin)
+		ids, err := s.repo.ExpireStaleInProgressTasks(ctx, s.taskTimeoutMin)
 		if err != nil {
 			log.Printf("[ERROR] TimeoutService (task heartbeat): %v", err)
 		} else if len(ids) > 0 {
@@ -98,13 +100,13 @@ func (s *TimeoutService) check() {
 
 	if s.agentStaleMin > 0 && s.agentRepo != nil {
 		staleDur := time.Duration(s.agentStaleMin) * time.Minute
-		staleAgents, err := s.agentRepo.ListStale(staleDur)
+		staleAgents, err := s.agentRepo.ListStale(ctx, staleDur)
 		if err != nil {
 			log.Printf("[ERROR] TimeoutService (stale agents): %v", err)
 			return
 		}
 		for _, agent := range staleAgents {
-			released, err := s.repo.ReleaseAgentTasks(agent.Name)
+			released, err := s.repo.ReleaseAgentTasks(ctx, agent.Name)
 			if err != nil {
 				log.Printf("[ERROR] TimeoutService: release tasks for stale agent %s: %v", agent.Name, err)
 				continue

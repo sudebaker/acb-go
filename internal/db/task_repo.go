@@ -2,6 +2,7 @@ package db
 
 import (
 	"database/sql"
+	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -106,7 +107,7 @@ func (r *TaskRepo) WithEventRepo(eventRepo *TaskEventRepo) {
 	r.eventRepo = eventRepo
 }
 
-func (r *TaskRepo) Create(task *models.Task) error {
+func (r *TaskRepo) Create(ctx context.Context, task *models.Task) error {
 	if task.Status == "" {
 		task.Status = "pending"
 	}
@@ -131,7 +132,7 @@ func (r *TaskRepo) Create(task *models.Task) error {
 		return fmt.Errorf("marshal artifacts: %w", err)
 	}
 
-	_, err = r.db.Exec(
+	_, err = r.db.ExecContext(ctx, 
 		`INSERT INTO tasks (id, title, assignee, status, priority, parents, skills, required_skills, tags,
 			body_goal, body_context, body_deliverable_format, body_deliverable_path,
 			summary, artifacts_json, max_retries, retry_count)
@@ -147,12 +148,12 @@ func (r *TaskRepo) Create(task *models.Task) error {
 		return err
 	}
 
-	r.logTaskEvent(task.ID, "CreateTask", task.Assignee, "")
+	r.logTaskEvent(ctx, task.ID, "CreateTask", task.Assignee, "")
 	return nil
 }
 
-func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
-	row := r.db.QueryRow(
+func (r *TaskRepo) GetByID(ctx context.Context, id string) (*models.Task, error) {
+	row := r.db.QueryRowContext(ctx, 
 		`SELECT `+taskColumns+` FROM tasks WHERE id = $1`, id,
 	)
 
@@ -167,7 +168,7 @@ func (r *TaskRepo) GetByID(id string) (*models.Task, error) {
 }
 
 // getTasksByIDs returns all tasks matching the given IDs in a single batch query.
-func (r *TaskRepo) getTasksByIDs(ids []string) ([]*models.Task, error) {
+func (r *TaskRepo) getTasksByIDs(ctx context.Context, ids []string) ([]*models.Task, error) {
 	if len(ids) == 0 {
 		return nil, nil
 	}
@@ -178,7 +179,7 @@ func (r *TaskRepo) getTasksByIDs(ids []string) ([]*models.Task, error) {
 		args[i] = id
 	}
 	query := fmt.Sprintf("SELECT "+taskColumns+" FROM tasks WHERE id IN (%s)", strings.Join(placeholders, ","))
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("batch get tasks: %w", err)
 	}
@@ -196,7 +197,7 @@ func (r *TaskRepo) getTasksByIDs(ids []string) ([]*models.Task, error) {
 }
 
 // AreParentsCompleted returns true if all parent tasks with the given IDs have status 'completed'.
-func (r *TaskRepo) AreParentsCompleted(parentIDs []string) (bool, error) {
+func (r *TaskRepo) AreParentsCompleted(ctx context.Context, parentIDs []string) (bool, error) {
 	if len(parentIDs) == 0 {
 		return true, nil
 	}
@@ -208,13 +209,13 @@ func (r *TaskRepo) AreParentsCompleted(parentIDs []string) (bool, error) {
 	}
 	query := fmt.Sprintf("SELECT COUNT(*) FROM tasks WHERE id IN (%s) AND status = 'completed'", strings.Join(placeholders, ","))
 	var count int
-	if err := r.db.QueryRow(query, args...).Scan(&count); err != nil {
+	if err := r.db.QueryRowContext(ctx, query, args...).Scan(&count); err != nil {
 		return false, fmt.Errorf("check parents: %w", err)
 	}
 	return count == len(parentIDs), nil
 }
 
-func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]models.Task, error) {
+func (r *TaskRepo) List(ctx context.Context, status, assignee string, requiredSkills ...string) ([]models.Task, error) {
 	query := "SELECT id, title, assignee, status, priority, parents, skills, required_skills, tags, body_goal, body_context, body_deliverable_format, body_deliverable_path, created_at, updated_at, summary, artifacts_json, last_heartbeat, max_retries, retry_count FROM tasks WHERE 1=1"
 	var args []interface{}
 	paramIdx := 1
@@ -237,7 +238,7 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 		paramIdx++
 	}
 
-	rows, err := r.db.Query(query, args...)
+	rows, err := r.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, fmt.Errorf("list tasks: %w", err)
 	}
@@ -277,8 +278,8 @@ func (r *TaskRepo) List(status, assignee string, requiredSkills ...string) ([]mo
 	return tasks, rows.Err()
 }
 
-func (r *TaskRepo) UpdateStatus(id, status string) error {
-	res, err := r.db.Exec(
+func (r *TaskRepo) UpdateStatus(ctx context.Context, id, status string) error {
+	res, err := r.db.ExecContext(ctx, 
 		`UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2`,
 		status, id,
 	)
@@ -290,12 +291,12 @@ func (r *TaskRepo) UpdateStatus(id, status string) error {
 		return fmt.Errorf("task %s not found", id)
 	}
 	// Log a generic event for status updates not covered by specific methods
-	r.logTaskEvent(id, "UpdateStatus", "", "")
+	r.logTaskEvent(ctx, id, "UpdateStatus", "", "")
 	return nil
 }
 
-func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
-	res, err := r.db.Exec(
+func (r *TaskRepo) ClaimTask(ctx context.Context, id, assignee string) (*models.Task, error) {
+	res, err := r.db.ExecContext(ctx, 
 		"UPDATE tasks SET status = 'claimed', assignee = $1, updated_at = NOW() WHERE id = $2 AND status = 'pending'",
 		assignee, id,
 	)
@@ -305,20 +306,20 @@ func (r *TaskRepo) ClaimTask(id, assignee string) (*models.Task, error) {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
+		r.db.QueryRowContext(ctx, "SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in pending status"}
 	}
 
-	r.logTaskEvent(id, "ClaimTask", assignee, "")
+	r.logTaskEvent(ctx, id, "ClaimTask", assignee, "")
 
-	return r.GetByID(id)
+	return r.GetByID(ctx, id)
 }
 
-func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
-	res, err := r.db.Exec(
+func (r *TaskRepo) StartTask(ctx context.Context, id string) (*models.Task, error) {
+	res, err := r.db.ExecContext(ctx, 
 		"UPDATE tasks SET status = 'in_progress', updated_at = NOW() WHERE id = $1 AND status = 'claimed'",
 		id,
 	)
@@ -328,59 +329,59 @@ func (r *TaskRepo) StartTask(id string) (*models.Task, error) {
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
+		r.db.QueryRowContext(ctx, "SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in claimed status"}
 	}
 
-	r.logTaskEvent(id, "StartTask", "", "")
+	r.logTaskEvent(ctx, id, "StartTask", "", "")
 
-	return r.GetByID(id)
+	return r.GetByID(ctx, id)
 }
 
-func (r *TaskRepo) BlockTask(id string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'blocked', updated_at = NOW() WHERE id = $1 AND status IN ('in_progress', 'claimed')", id)
+func (r *TaskRepo) BlockTask(ctx context.Context, id string) (*models.Task, error) {
+	res, err := r.db.ExecContext(ctx, "UPDATE tasks SET status = 'blocked', updated_at = NOW() WHERE id = $1 AND status IN ('in_progress', 'claimed')", id)
 	if err != nil {
 		return nil, fmt.Errorf("block task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
+		r.db.QueryRowContext(ctx, "SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress or claimed status"}
 	}
 
-	r.logTaskEvent(id, "BlockTask", "", "")
+	r.logTaskEvent(ctx, id, "BlockTask", "", "")
 
-	return r.GetByID(id)
+	return r.GetByID(ctx, id)
 }
 
-func (r *TaskRepo) CompleteTask(id, summary string) (*models.Task, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'completed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'", summary, id)
+func (r *TaskRepo) CompleteTask(ctx context.Context, id, summary string) (*models.Task, error) {
+	res, err := r.db.ExecContext(ctx, "UPDATE tasks SET status = 'completed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'", summary, id)
 	if err != nil {
 		return nil, fmt.Errorf("complete task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
+		r.db.QueryRowContext(ctx, "SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress status"}
 	}
 
-	r.logTaskEvent(id, "CompleteTask", "", summary)
+	r.logTaskEvent(ctx, id, "CompleteTask", "", summary)
 
-	completedTask, err := r.GetByID(id)
+	completedTask, err := r.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get task after complete: %w", err)
 	}
 
 	// Promote children whose parents are now all completed
-	if err := r.PromoteChildren(id); err != nil {
+	if err := r.PromoteChildren(ctx, id); err != nil {
 		log.Printf("[WARN] CompleteTask: promote children for %s: %v", id, err)
 	}
 
@@ -395,41 +396,41 @@ type FailTaskResult struct {
 	MaxRetry int  // configured max retries
 }
 
-func (r *TaskRepo) FailTask(id, reason string) (*FailTaskResult, error) {
-	res, err := r.db.Exec("UPDATE tasks SET status = 'failed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'", reason, id)
+func (r *TaskRepo) FailTask(ctx context.Context, id, reason string) (*FailTaskResult, error) {
+	res, err := r.db.ExecContext(ctx, "UPDATE tasks SET status = 'failed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'", reason, id)
 	if err != nil {
 		return nil, fmt.Errorf("fail task: %w", err)
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
 		var current string
-		r.db.QueryRow("SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
+		r.db.QueryRowContext(ctx, "SELECT status FROM tasks WHERE id = $1", id).Scan(&current)
 		if current == "" {
 			return nil, fmt.Errorf("task %s not found", id)
 		}
 		return nil, &ConflictError{CurrentStatus: current, Message: "task is not in in_progress status"}
 	}
 
-	r.logTaskEvent(id, "FailTask", "", reason)
+	r.logTaskEvent(ctx, id, "FailTask", "", reason)
 
 	// Check for auto-retry
-	task, err := r.GetByID(id)
+	task, err := r.GetByID(ctx, id)
 	if err != nil {
 		return nil, fmt.Errorf("get task after fail: %w", err)
 	}
 	result := &FailTaskResult{Task: task, MaxRetry: task.MaxRetries}
 
 	if task.MaxRetries > 0 && task.RetryCount < task.MaxRetries {
-		_, err := r.db.Exec(
+		_, err := r.db.ExecContext(ctx, 
 			"UPDATE tasks SET status = 'pending', retry_count = retry_count + 1, assignee = '', updated_at = NOW() WHERE id = $1",
 			id,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("fail task retry: %w", err)
 		}
-		r.logTaskEvent(id, "TaskRetry", "", fmt.Sprintf("retry %d/%d: %s", task.RetryCount+1, task.MaxRetries, reason))
+		r.logTaskEvent(ctx, id, "TaskRetry", "", fmt.Sprintf("retry %d/%d: %s", task.RetryCount+1, task.MaxRetries, reason))
 
-		task, err = r.GetByID(id)
+		task, err = r.GetByID(ctx, id)
 		if err != nil {
 			return nil, fmt.Errorf("get task after retry: %w", err)
 		}
@@ -443,12 +444,12 @@ func (r *TaskRepo) FailTask(id, reason string) (*FailTaskResult, error) {
 
 // ExpirePendingTasks cancels tasks that have been in 'pending' status for longer
 // than timeoutMinutes and returns the IDs of expired tasks for logging.
-func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
+func (r *TaskRepo) ExpirePendingTasks(ctx context.Context, timeoutMinutes int) ([]string, error) {
 	if timeoutMinutes <= 0 {
 		return nil, fmt.Errorf("invalid timeout: %d must be > 0", timeoutMinutes)
 	}
 	intervalStr := fmt.Sprintf("%d minutes", timeoutMinutes)
-	rows, err := r.db.Query(
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT id, title FROM tasks
 		 WHERE status = 'pending'
 		 AND created_at < NOW() - $1::interval`,
@@ -474,7 +475,7 @@ func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
 	}
 
 	for _, id := range expiredIDs {
-		_, err := r.db.Exec(
+		_, err := r.db.ExecContext(ctx, 
 			`UPDATE tasks SET status = 'failed', summary = 'Task expired: no agent claimed within timeout period', updated_at = NOW() WHERE id = $1 AND status = 'pending'`,
 			id,
 		)
@@ -482,7 +483,7 @@ func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
 			log.Printf("[ERROR] ExpirePendingTasks: failed to expire task %s: %v", id, err)
 			continue
 		}
-		r.logTaskEvent(id, "PendingTimeout", "", fmt.Sprintf("Task expired after %d minutes in pending status", timeoutMinutes))
+		r.logTaskEvent(ctx, id, "PendingTimeout", "", fmt.Sprintf("Task expired after %d minutes in pending status", timeoutMinutes))
 	}
 
 	return expiredIDs, nil
@@ -490,8 +491,8 @@ func (r *TaskRepo) ExpirePendingTasks(timeoutMinutes int) ([]string, error) {
 
 // ReleaseAgentTasks resets all claimed and in-progress tasks for a given agent
 // back to pending. Used when an agent is detected as stale (no heartbeat).
-func (r *TaskRepo) ReleaseAgentTasks(agentName string) ([]string, error) {
-	rows, err := r.db.Query(
+func (r *TaskRepo) ReleaseAgentTasks(ctx context.Context, agentName string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT id FROM tasks WHERE assignee = $1 AND status IN ('claimed', 'in_progress')`,
 		agentName,
 	)
@@ -511,7 +512,7 @@ func (r *TaskRepo) ReleaseAgentTasks(agentName string) ([]string, error) {
 	}
 
 	for _, id := range released {
-		_, err := r.db.Exec(
+		_, err := r.db.ExecContext(ctx, 
 			`UPDATE tasks SET status = 'pending', assignee = '', updated_at = NOW() WHERE id = $1`,
 			id,
 		)
@@ -519,15 +520,15 @@ func (r *TaskRepo) ReleaseAgentTasks(agentName string) ([]string, error) {
 			log.Printf("[ERROR] ReleaseAgentTasks: failed to release task %s: %v", id, err)
 			continue
 		}
-		r.logTaskEvent(id, "StaleAgentRelease", "", fmt.Sprintf("released from stale agent %s", agentName))
+		r.logTaskEvent(ctx, id, "StaleAgentRelease", "", fmt.Sprintf("released from stale agent %s", agentName))
 	}
 
 	return released, nil
 }
 
 // UpdateTaskHeartbeat updates the last_heartbeat timestamp for a task.
-func (r *TaskRepo) UpdateTaskHeartbeat(taskID string) error {
-	res, err := r.db.Exec(
+func (r *TaskRepo) UpdateTaskHeartbeat(ctx context.Context, taskID string) error {
+	res, err := r.db.ExecContext(ctx, 
 		`UPDATE tasks SET last_heartbeat = NOW(), updated_at = NOW() WHERE id = $1`,
 		taskID,
 	)
@@ -544,12 +545,12 @@ func (r *TaskRepo) UpdateTaskHeartbeat(taskID string) error {
 // ExpireStaleInProgressTasks cancels tasks stuck in 'in_progress' whose
 // last_heartbeat is older than timeoutMinutes, or that have no heartbeat
 // set since created_at.
-func (r *TaskRepo) ExpireStaleInProgressTasks(timeoutMinutes int) ([]string, error) {
+func (r *TaskRepo) ExpireStaleInProgressTasks(ctx context.Context, timeoutMinutes int) ([]string, error) {
 	if timeoutMinutes <= 0 {
 		return nil, nil
 	}
 	intervalStr := fmt.Sprintf("%d minutes", timeoutMinutes)
-	rows, err := r.db.Query(
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT id, max_retries, retry_count FROM tasks
 		 WHERE status = 'in_progress'
 		 AND (
@@ -580,7 +581,7 @@ func (r *TaskRepo) ExpireStaleInProgressTasks(timeoutMinutes int) ([]string, err
 	}
 
 	for _, id := range staleIDs {
-		_, err := r.db.Exec(
+		_, err := r.db.ExecContext(ctx, 
 			`UPDATE tasks SET status = 'failed', summary = $1, updated_at = NOW() WHERE id = $2 AND status = 'in_progress'`,
 			fmt.Sprintf("Task timed out after %d minutes without heartbeat", timeoutMinutes), id,
 		)
@@ -588,15 +589,15 @@ func (r *TaskRepo) ExpireStaleInProgressTasks(timeoutMinutes int) ([]string, err
 			log.Printf("[ERROR] ExpireStaleInProgressTasks: failed to expire task %s: %v", id, err)
 			continue
 		}
-		r.logTaskEvent(id, "TaskHeartbeatTimeout", "", fmt.Sprintf("Task expired after %d minutes without heartbeat", timeoutMinutes))
+		r.logTaskEvent(ctx, id, "TaskHeartbeatTimeout", "", fmt.Sprintf("Task expired after %d minutes without heartbeat", timeoutMinutes))
 	}
 
 	return staleIDs, nil
 }
 
-func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
+func (r *TaskRepo) getArtifactsJSON(ctx context.Context, id string) (string, error) {
 	var raw string
-	err := r.db.QueryRow("SELECT artifacts_json FROM tasks WHERE id = $1", id).Scan(&raw)
+	err := r.db.QueryRowContext(ctx, "SELECT artifacts_json FROM tasks WHERE id = $1", id).Scan(&raw)
 	if err == sql.ErrNoRows {
 		return "", fmt.Errorf("task %s not found", id)
 	}
@@ -606,13 +607,13 @@ func (r *TaskRepo) getArtifactsJSON(id string) (string, error) {
 	return raw, nil
 }
 
-func (r *TaskRepo) SetArtifactsJSON(id, raw string) error {
-	_, err := r.db.Exec("UPDATE tasks SET artifacts_json = $1 WHERE id = $2", raw, id)
+func (r *TaskRepo) SetArtifactsJSON(ctx context.Context, id, raw string) error {
+	_, err := r.db.ExecContext(ctx, "UPDATE tasks SET artifacts_json = $1 WHERE id = $2", raw, id)
 	return err
 }
 
-func (r *TaskRepo) AddArtifact(taskID string, artifact models.Artifact) error {
-	raw, err := r.getArtifactsJSON(taskID)
+func (r *TaskRepo) AddArtifact(ctx context.Context, taskID string, artifact models.Artifact) error {
+	raw, err := r.getArtifactsJSON(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -630,11 +631,11 @@ func (r *TaskRepo) AddArtifact(taskID string, artifact models.Artifact) error {
 		return fmt.Errorf("marshal artifacts: %w", err)
 	}
 
-	return r.SetArtifactsJSON(taskID, string(data))
+	return r.SetArtifactsJSON(ctx, taskID, string(data))
 }
 
-func (r *TaskRepo) RemoveArtifact(taskID string, key string) error {
-	raw, err := r.getArtifactsJSON(taskID)
+func (r *TaskRepo) RemoveArtifact(ctx context.Context, taskID string, key string) error {
+	raw, err := r.getArtifactsJSON(ctx, taskID)
 	if err != nil {
 		return err
 	}
@@ -658,11 +659,11 @@ func (r *TaskRepo) RemoveArtifact(taskID string, key string) error {
 		return fmt.Errorf("marshal artifacts: %w", err)
 	}
 
-	return r.SetArtifactsJSON(taskID, string(data))
+	return r.SetArtifactsJSON(ctx, taskID, string(data))
 }
 
-func (r *TaskRepo) GetArtifacts(taskID string) ([]models.Artifact, error) {
-	raw, err := r.getArtifactsJSON(taskID)
+func (r *TaskRepo) GetArtifacts(ctx context.Context, taskID string) ([]models.Artifact, error) {
+	raw, err := r.getArtifactsJSON(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -678,8 +679,8 @@ func (r *TaskRepo) GetArtifacts(taskID string) ([]models.Artifact, error) {
 	return list, nil
 }
 
-func (r *TaskRepo) GetPendingByAgent(agent string) ([]models.Task, error) {
-	return r.List("pending", "")
+func (r *TaskRepo) GetPendingByAgent(ctx context.Context, agent string) ([]models.Task, error) {
+	return r.List(ctx, "pending", "")
 }
 
 // GetTaskCounts returns the count of tasks per status.
@@ -693,9 +694,9 @@ type TaskCounts struct {
 	Total       int `json:"total"`
 }
 
-func (r *TaskRepo) GetTaskCounts() (*TaskCounts, error) {
+func (r *TaskRepo) GetTaskCounts(ctx context.Context) (*TaskCounts, error) {
 	counts := &TaskCounts{}
-	rows, err := r.db.Query(
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT status, COUNT(*) as cnt FROM tasks GROUP BY status`,
 	)
 	if err != nil {
@@ -735,8 +736,8 @@ type TaskGraph struct {
 	Children []*models.Task `json:"children"`
 }
 
-func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
-	task, err := r.GetByID(taskID)
+func (r *TaskRepo) GetDependencyGraph(ctx context.Context, taskID string) (*TaskGraph, error) {
+	task, err := r.GetByID(ctx, taskID)
 	if err != nil {
 		return nil, err
 	}
@@ -748,7 +749,7 @@ func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
 
 	// Batch load parents
 	if len(task.Parents) > 0 {
-		parents, err := r.getTasksByIDs(task.Parents)
+		parents, err := r.getTasksByIDs(ctx, task.Parents)
 		if err != nil {
 			log.Printf("[WARN] GetDependencyGraph: batch load parents: %v", err)
 		} else {
@@ -757,7 +758,7 @@ func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
 	}
 
 	// Find children (tasks that list this task as a parent)
-	rows, err := r.db.Query(
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT id FROM tasks WHERE parents LIKE $1`,
 		fmt.Sprintf("%%%s%%", taskID),
 	)
@@ -778,7 +779,7 @@ func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
 
 	// Batch load children
 	if len(childIDs) > 0 {
-		children, err := r.getTasksByIDs(childIDs)
+		children, err := r.getTasksByIDs(ctx, childIDs)
 		if err != nil {
 			log.Printf("[WARN] GetDependencyGraph: batch load children: %v", err)
 		} else {
@@ -791,22 +792,22 @@ func (r *TaskRepo) GetDependencyGraph(taskID string) (*TaskGraph, error) {
 
 // CheckParentsCompleted returns true if all parent tasks of the given task
 // have status 'completed'. Tasks with no parents return true.
-func (r *TaskRepo) CheckParentsCompleted(taskID string) (bool, error) {
-	task, err := r.GetByID(taskID)
+func (r *TaskRepo) CheckParentsCompleted(ctx context.Context, taskID string) (bool, error) {
+	task, err := r.GetByID(ctx, taskID)
 	if err != nil {
 		return false, fmt.Errorf("get task for parent check: %w", err)
 	}
 	if task == nil {
 		return false, fmt.Errorf("task %s not found", taskID)
 	}
-	return r.AreParentsCompleted(task.Parents)
+	return r.AreParentsCompleted(ctx, task.Parents)
 }
 
 // PromoteChildren evaluates all tasks that list the given task as a parent.
 // Children whose all parents are now completed remain in pending (already claimable).
 // This is called after a task is completed.
-func (r *TaskRepo) PromoteChildren(taskID string) error {
-	rows, err := r.db.Query(
+func (r *TaskRepo) PromoteChildren(ctx context.Context, taskID string) error {
+	rows, err := r.db.QueryContext(ctx, 
 		`SELECT id FROM tasks WHERE parents LIKE $1 AND status = 'pending'`,
 		fmt.Sprintf("%%%s%%", taskID),
 	)
@@ -827,13 +828,13 @@ func (r *TaskRepo) PromoteChildren(taskID string) error {
 
 	for _, childID := range childIDs {
 		// Verify all parents are completed before promoting
-		allDone, err := r.CheckParentsCompleted(childID)
+		allDone, err := r.CheckParentsCompleted(ctx, childID)
 		if err != nil {
 			log.Printf("[WARN] PromoteChildren: check parents for %s: %v", childID, err)
 			continue
 		}
 		if allDone {
-			r.logTaskEvent(childID, "ParentsCompleted", "", fmt.Sprintf("parent %s completed", taskID))
+			r.logTaskEvent(ctx, childID, "ParentsCompleted", "", fmt.Sprintf("parent %s completed", taskID))
 		}
 	}
 
@@ -841,16 +842,16 @@ func (r *TaskRepo) PromoteChildren(taskID string) error {
 }
 
 // ListTaskEvents returns the event trail for a task.
-func (r *TaskRepo) ListTaskEvents(taskID string) ([]models.TaskEvent, error) {
+func (r *TaskRepo) ListTaskEvents(ctx context.Context, taskID string) ([]models.TaskEvent, error) {
 	if r.eventRepo == nil {
 		return nil, fmt.Errorf("event repo not initialized")
 	}
-	return r.eventRepo.ListByTask(taskID)
+	return r.eventRepo.ListByTask(ctx, taskID)
 }
 
 // logTaskEvent registers an event for a task transition
-func (r *TaskRepo) logTaskEvent(taskID, event, agent, detail string) {
+func (r *TaskRepo) logTaskEvent(ctx context.Context, taskID, event, agent, detail string) {
 	if r.eventRepo != nil {
-		_ = r.eventRepo.InsertEvent(taskID, event, agent, detail)
+		_ = r.eventRepo.InsertEvent(ctx, taskID, event, agent, detail)
 	}
 }

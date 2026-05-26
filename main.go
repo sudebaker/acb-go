@@ -35,6 +35,9 @@ func main() {
 		Password: cfg.RedisPass,
 		DB:       0,
 	})
+	if cfg.RedisPass == "" {
+		log.Println("WARNING: Redis password (ACB_REDIS_PASS) is not set — using unauthenticated connection")
+	}
 	defer rdb.Close()
 
 	taskRepo := db.NewTaskRepo(database)

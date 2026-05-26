@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -18,11 +19,11 @@ func TestExpirePendingTasks_NoExpired(t *testing.T) {
 		Title:  "Fresh task",
 		Status: "pending",
 	}
-	if err := repo.Create(task); err != nil {
+	if err := repo.Create(context.Background(), task); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
-	ids, err := repo.ExpirePendingTasks(15)
+	ids, err := repo.ExpirePendingTasks(context.Background(), 15)
 	if err != nil {
 		t.Fatalf("ExpirePendingTasks: %v", err)
 	}
@@ -31,7 +32,7 @@ func TestExpirePendingTasks_NoExpired(t *testing.T) {
 	}
 
 	// Task should still be pending
-	got, _ := repo.GetByID("task-fresh")
+	got, _ := repo.GetByID(context.Background(), "task-fresh")
 	if got.Status != "pending" {
 		t.Errorf("expected status=pending, got %s", got.Status)
 	}
@@ -47,7 +48,7 @@ func TestExpirePendingTasks_ExpiredTask(t *testing.T) {
 		Title:  "Old task",
 		Status: "pending",
 	}
-	if err := repo.Create(task); err != nil {
+	if err := repo.Create(context.Background(), task); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
 
@@ -58,7 +59,7 @@ func TestExpirePendingTasks_ExpiredTask(t *testing.T) {
 	}
 
 	// Expire with 15 minute timeout
-	ids, err := repo.ExpirePendingTasks(15)
+	ids, err := repo.ExpirePendingTasks(context.Background(), 15)
 	if err != nil {
 		t.Fatalf("ExpirePendingTasks: %v", err)
 	}
@@ -67,7 +68,7 @@ func TestExpirePendingTasks_ExpiredTask(t *testing.T) {
 	}
 
 	// Task should now be failed
-	got, _ := repo.GetByID("task-old")
+	got, _ := repo.GetByID(context.Background(), "task-old")
 	if got.Status != "failed" {
 		t.Errorf("expected status=failed, got %s", got.Status)
 	}
@@ -86,17 +87,17 @@ func TestExpirePendingTasks_ClaimedNotExpired(t *testing.T) {
 		Title:  "Old claimed task",
 		Status: "pending",
 	}
-	if err := repo.Create(task); err != nil {
+	if err := repo.Create(context.Background(), task); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	if _, err := repo.ClaimTask("task-claimed-old", "test-agent"); err != nil {
+	if _, err := repo.ClaimTask(context.Background(), "task-claimed-old", "test-agent"); err != nil {
 		t.Fatalf("ClaimTask: %v", err)
 	}
 
 	// Backdate (PostgreSQL syntax)
 	_, _ = testDB.Exec("UPDATE tasks SET created_at = NOW() - interval '30 minutes' WHERE id = $1", "task-claimed-old")
 
-	ids, err := repo.ExpirePendingTasks(15)
+	ids, err := repo.ExpirePendingTasks(context.Background(), 15)
 	if err != nil {
 		t.Fatalf("ExpirePendingTasks: %v", err)
 	}
@@ -104,7 +105,7 @@ func TestExpirePendingTasks_ClaimedNotExpired(t *testing.T) {
 		t.Errorf("expected 0 expired (claimed tasks should not be expired), got %d", len(ids))
 	}
 
-	got, _ := repo.GetByID("task-claimed-old")
+	got, _ := repo.GetByID(context.Background(), "task-claimed-old")
 	if got.Status != "claimed" {
 		t.Errorf("expected status=claimed, got %s", got.Status)
 	}
@@ -120,7 +121,7 @@ func TestExpirePendingTasks_MultipleExpired(t *testing.T) {
 			Title:  fmt.Sprintf("Task %d", i),
 			Status: "pending",
 		}
-		if err := repo.Create(task); err != nil {
+		if err := repo.Create(context.Background(), task); err != nil {
 			t.Fatalf("Create task-%d: %v", i, err)
 		}
 	}
@@ -130,7 +131,7 @@ func TestExpirePendingTasks_MultipleExpired(t *testing.T) {
 		_, _ = testDB.Exec("UPDATE tasks SET created_at = NOW() - interval '20 minutes' WHERE id = $1", fmt.Sprintf("task-%d", i))
 	}
 
-	ids, err := repo.ExpirePendingTasks(15)
+	ids, err := repo.ExpirePendingTasks(context.Background(), 15)
 	if err != nil {
 		t.Fatalf("ExpirePendingTasks: %v", err)
 	}
@@ -140,7 +141,7 @@ func TestExpirePendingTasks_MultipleExpired(t *testing.T) {
 
 	// Remaining 2 should still be pending
 	for i := 3; i < 5; i++ {
-		got, _ := repo.GetByID(fmt.Sprintf("task-%d", i))
+		got, _ := repo.GetByID(context.Background(), fmt.Sprintf("task-%d", i))
 		if got.Status != "pending" {
 			t.Errorf("task-%d: expected pending, got %s", i, got.Status)
 		}
@@ -151,7 +152,7 @@ func TestExpirePendingTasks_ZeroTimeout(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
 
-	_, err := repo.ExpirePendingTasks(0)
+	_, err := repo.ExpirePendingTasks(context.Background(), 0)
 	if err == nil {
 		t.Fatal("expected error for zero timeout, got nil")
 	}
@@ -167,7 +168,7 @@ func TestExpirePendingTasks_NegativeTimeout(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewTaskRepo(db)
 
-	_, err := repo.ExpirePendingTasks(-5)
+	_, err := repo.ExpirePendingTasks(context.Background(), -5)
 	if err == nil {
 		t.Fatal("expected error for negative timeout, got nil")
 	}

@@ -1,12 +1,9 @@
 package dispatcher
 
 import (
-	"crypto/hmac"
-	"crypto/sha256"
+	"context"
 	"database/sql"
-	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -74,9 +71,9 @@ func TestFindNextForAgent_NoTasks(t *testing.T) {
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "test-agent", Port: 8081, Skills: []string{"go"}})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Port: 8081, Skills: []string{"go"}})
 
-	task, err := FindNextForAgent(agentRepo, taskRepo, "test-agent")
+	task, err := FindNextForAgent(context.Background(), agentRepo, taskRepo, "test-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -90,11 +87,11 @@ func TestFindNextForAgent_WithMatchingSkills(t *testing.T) {
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "go-agent", Port: 8081, Skills: []string{"go", "testing"}})
-	taskRepo.Create(&models.Task{ID: "t1", Title: "go task", RequiredSkills: []string{"go"}})
-	taskRepo.Create(&models.Task{ID: "t2", Title: "rust task", RequiredSkills: []string{"rust"}})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "go-agent", Port: 8081, Skills: []string{"go", "testing"}})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t1", Title: "go task", RequiredSkills: []string{"go"}})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t2", Title: "rust task", RequiredSkills: []string{"rust"}})
 
-	task, err := FindNextForAgent(agentRepo, taskRepo, "go-agent")
+	task, err := FindNextForAgent(context.Background(), agentRepo, taskRepo, "go-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,10 +108,10 @@ func TestFindNextForAgent_NoMatchingSkills(t *testing.T) {
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "go-agent", Port: 8081, Skills: []string{"go"}})
-	taskRepo.Create(&models.Task{ID: "t1", Title: "rust task", RequiredSkills: []string{"rust"}})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "go-agent", Port: 8081, Skills: []string{"go"}})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t1", Title: "rust task", RequiredSkills: []string{"rust"}})
 
-	task, err := FindNextForAgent(agentRepo, taskRepo, "go-agent")
+	task, err := FindNextForAgent(context.Background(), agentRepo, taskRepo, "go-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,10 +125,10 @@ func TestFindNextForAgent_TaskWithNoRequiredSkills(t *testing.T) {
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "any-agent", Port: 8081, Skills: []string{"go"}})
-	taskRepo.Create(&models.Task{ID: "t1", Title: "any task"})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "any-agent", Port: 8081, Skills: []string{"go"}})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t1", Title: "any task"})
 
-	task, err := FindNextForAgent(agentRepo, taskRepo, "any-agent")
+	task, err := FindNextForAgent(context.Background(), agentRepo, taskRepo, "any-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,11 +145,11 @@ func TestFindNextForAgent_PriorityOrder(t *testing.T) {
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{Name: "pri-agent", Port: 8081, Skills: []string{"go"}})
-	taskRepo.Create(&models.Task{ID: "low", Title: "low priority", Priority: 5, RequiredSkills: []string{"go"}})
-	taskRepo.Create(&models.Task{ID: "high", Title: "high priority", Priority: 1, RequiredSkills: []string{"go"}})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "pri-agent", Port: 8081, Skills: []string{"go"}})
+	taskRepo.Create(context.Background(), &models.Task{ID: "low", Title: "low priority", Priority: 5, RequiredSkills: []string{"go"}})
+	taskRepo.Create(context.Background(), &models.Task{ID: "high", Title: "high priority", Priority: 1, RequiredSkills: []string{"go"}})
 
-	task, err := FindNextForAgent(agentRepo, taskRepo, "pri-agent")
+	task, err := FindNextForAgent(context.Background(), agentRepo, taskRepo, "pri-agent")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,9 +166,9 @@ func TestFindNextForAgent_UnknownAgent(t *testing.T) {
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
-	taskRepo.Create(&models.Task{ID: "t1", Title: "task"})
+	taskRepo.Create(context.Background(), &models.Task{ID: "t1", Title: "task"})
 
-	task, err := FindNextForAgent(agentRepo, taskRepo, "unknown")
+	task, err := FindNextForAgent(context.Background(), agentRepo, taskRepo, "unknown")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -201,7 +198,7 @@ func TestDispatchNewTask_WebhookSuccess(t *testing.T) {
 	agentRepo := db.NewAgentRepo(d)
 	taskRepo := db.NewTaskRepo(d)
 
-	agentRepo.UpsertAgent(&models.Agent{
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{
 		Name:          "webhook-agent",
 		Port:          8081,
 		Token:         "test-token",
@@ -236,7 +233,7 @@ func TestDispatchNewTask_NoWebhookAgents(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 
 	// Agent without webhook_url
-	agentRepo.UpsertAgent(&models.Agent{
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{
 		Name:   "no-webhook-agent",
 		Port:   8081,
 		Skills: []string{"go"},
@@ -294,21 +291,3 @@ func TestWebhookPayloadFormat(t *testing.T) {
 	}
 }
 
-func TestWebhookSignature(t *testing.T) {
-	// Test that HMAC signature is computed correctly
-	secret := "test-secret"
-	body := []byte(`{"action":"new_task"}`)
-
-	mac := hmac.New(sha256.New, []byte(secret))
-	mac.Write(body)
-	expected := hex.EncodeToString(mac.Sum(nil))
-
-	// Verify the signature format
-	sig := fmt.Sprintf("sha256=%s", expected)
-	if len(sig) < 7 {
-		t.Errorf("signature too short: %s", sig)
-	}
-	if sig[:7] != "sha256=" {
-		t.Errorf("signature should start with sha256=, got %s", sig[:7])
-	}
-}

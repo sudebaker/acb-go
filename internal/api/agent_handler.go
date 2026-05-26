@@ -2,14 +2,13 @@ package api
 
 import (
 	"encoding/json"
-	"fmt"
 	"net/http"
-	"github.com/sudebaker/acb-go/internal/dispatcher"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
+	"github.com/sudebaker/acb-go/internal/dispatcher"
 	"github.com/sudebaker/acb-go/internal/models"
-	"github.com/go-chi/chi/v5"
 )
 
 type AgentHandler struct {
@@ -19,6 +18,7 @@ type AgentHandler struct {
 }
 
 func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	var input struct {
 		Name string `json:"name"`
 	}
@@ -39,7 +39,7 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.agentRepo.UpdateHeartbeat(input.Name); err != nil {
+	if err := h.agentRepo.UpdateHeartbeat(ctx, input.Name); err != nil {
 		WriteErrorSafe(w, 404, "agent_not_found", err)
 		return
 	}
@@ -48,9 +48,10 @@ func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *AgentHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
 	name := chi.URLParam(r, "name")
 
-	agent, err := h.agentRepo.GetByName(name)
+	agent, err := h.agentRepo.GetByName(ctx, name)
 	if err != nil {
 		WriteErrorSafe(w, 500, "get_failed", err)
 		return
@@ -69,6 +70,14 @@ func (h *AgentHandler) GetAgent(w http.ResponseWriter, r *http.Request) {
 // POST /agents  —  accepts webhook_url and webhook_secret
 // SECURITY: Prevents token overwrite — agent can only register itself, not another.
 func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	// Rate limit agent registration to prevent abuse
+	if h.limiter != nil && !h.limiter.Allow("register") {
+		WriteError(w, 429, "rate_limited", "too many registration requests")
+		return
+	}
+
 	var input struct {
 		Name          string   `json:"name"`
 		Port          int      `json:"port"`
@@ -104,7 +113,7 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 	// Validate skills against allowed list
 	if len(input.Skills) > 0 {
 		if invalid := h.cfg.ValidateSkills(input.Skills); len(invalid) > 0 {
-			WriteError(w, 400, "invalid_skills", fmt.Sprintf("these skills are not allowed: %v", invalid))
+			WriteError(w, 400, "invalid_skills", "one or more skills are not in the allowed catalog")
 			return
 		}
 	}
@@ -123,7 +132,7 @@ func (h *AgentHandler) RegisterAgent(w http.ResponseWriter, r *http.Request) {
 
 	agent := &models.Agent{Name: input.Name, Port: input.Port, Token: input.Token, Skills: input.Skills, WebhookURL: input.WebhookURL, WebhookSecret: input.WebhookSecret}
 
-	if err := h.agentRepo.UpsertAgent(agent); err != nil {
+	if err := h.agentRepo.UpsertAgent(ctx, agent); err != nil {
 		WriteErrorSafe(w, 500, "upsert_failed", err)
 		return
 	}

@@ -62,10 +62,18 @@ Create a new task.
 **Skills validation:** If `ACB_ALLOWED_SKILLS` is configured, each skill in `required_skills` must be in the allowed list. Tasks with invalid skills receive `400`:
 
 ```json
-{"error": "invalid_skills", "message": "invalid skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
+{"error": "invalid_required_skills", "message": "one or more required skills are not in the allowed catalog"}
 ```
 
 If `ACB_ALLOWED_SKILLS` is not set (empty), all skills are accepted.
+
+**Tags validation:** If `ACB_ALLOWED_TAGS` is configured, each tag must be in the allowed list. Tasks with invalid tags receive `400`:
+
+```json
+{"error": "invalid_tags", "message": "one or more tags are not in the allowed catalog"}
+```
+
+If `ACB_ALLOWED_TAGS` is not set (empty), all tags are accepted.
 
 **Request body:**
 ```json
@@ -317,6 +325,12 @@ Register or update an agent with webhook URL for task dispatch.
 **Auth:** Bearer token required. Agents can only register themselves (X-Agent-Name must match).
 
 **Skills validation:** If `ACB_ALLOWED_SKILLS` is configured, each skill in the agent's `skills` array must be in the allowed list. Registration with invalid skills receives `400`:
+
+```json
+{"error": "invalid_skills", "message": "one or more skills are not in the allowed catalog"}
+```
+
+If `ACB_ALLOWED_SKILLS` is not set (empty), all skills are accepted.
 
 ```json
 {"error": "invalid_skills", "message": "invalid agent skills: [\"hacking\"]", "allowed": ["coding","review","testing",...]}
@@ -597,6 +611,28 @@ Published on the following channels depending on the event type:
 Events are fire-and-forget via goroutines. Redis publish errors are logged but never block the request.
 
 ---
+
+## Environment Variables
+
+| Variable | Description | Default |
+|---|---|---|
+| `ACB_PORT` | HTTP server port | `8090` |
+| `ACB_DB_PATH` | SQLite database path | `/var/lib/acb/acb.db` |
+| `ACB_REDIS_ADDR` | Redis address | `redis:6379` |
+| `ACB_REDIS_PASS` | Redis password | (empty) |
+| `ACB_RUSTFS_ENDPOINT` | RustFS S3-compatible endpoint | `rustfs:9000` |
+| `ACB_RUSTFS_BUCKET` | RustFS bucket name | `acb-artifacts` |
+| `ACB_RUSTFS_REGION` | RustFS region (preferred). Falls back to `RUSTFS_REGION`. | `us-east-1` |
+| `ACB_WEBHOOK_SECRET_KEY` | Base64-encoded 32-byte key for webhook secret encryption. Falls back to `WEBHOOK_SECRET_KEY`. | (required for webhook secrets) |
+| `ACB_ADMIN_TOKEN` | Bootstrap admin token. If unset, a random token is generated and printed to stderr on every restart. | (auto-generated) |
+| `ACB_ALLOWED_SKILLS` | Comma-separated allowed skills catalog. | (all skills allowed) |
+| `ACB_ALLOWED_TAGS` | Comma-separated allowed tags catalog. | (all tags allowed) |
+| `ACB_PENDING_TIMEOUT_MIN` | Minutes before unclaimed pending tasks auto-expire (0 = disabled). | `15` |
+| `ACB_PENDING_TIMEOUT_CHECK_SEC` | Seconds between timeout checks. | `60` |
+| `ACB_ALLOW_HTTP_WEBHOOKS` | Set to `1` to allow `http://` webhook URLs (internal networks). | `0` (https only) |
+| `ACB_LOG_LEVEL` | Log level (`debug`, `info`, `warn`, `error`). | `info` |
+| `ACB_ARTIFACT_TTL_DAYS` | Artifact TTL in days. | `30` |
+| `ACB_MAX_UPLOAD_SIZE_MB` | Max upload size in MB. | `32` |
 
 ## cURL Examples
 

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
@@ -16,7 +17,7 @@ func authTestRouter(t *testing.T) (*sql.DB, http.Handler) {
 	t.Helper()
 	d := setupTestDB(t)
 	agentRepo := db.NewAgentRepo(d)
-	agentRepo.UpsertAgent(&models.Agent{Name: "worker-a", Token: "valid-token"})
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "worker-a", Token: "valid-token"})
 
 	r := chi.NewRouter()
 	r.Use(AuthMiddleware(agentRepo))
