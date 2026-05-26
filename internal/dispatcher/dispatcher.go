@@ -333,17 +333,23 @@ func (d *Dispatcher) processRetryQueue(ctx context.Context) {
 }
 
 // processAllRetryQueues iterates over retry queues and retries pending entries.
+// Each agent's queue is processed in its own goroutine so that exponential
+// backoff delays are isolated per agent and don't block other agents.
 func (d *Dispatcher) processAllRetryQueues(ctx context.Context) {
 	iter := d.rdb.Scan(ctx, 0, retryQueuePrefix+"*", 100).Iterator()
 	for iter.Next(ctx) {
 		key := iter.Val()
-		for {
-			data, err := d.rdb.LPop(ctx, key).Result()
-			if err != nil {
-				break
+		d.wg.Add(1)
+		go func(k string) {
+			defer d.wg.Done()
+			for {
+				data, err := d.rdb.LPop(ctx, k).Result()
+				if err != nil {
+					break
+				}
+				d.retryEntry(data)
 			}
-			d.retryEntry(data)
-		}
+		}(key)
 	}
 }
 
