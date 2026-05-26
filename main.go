@@ -3,10 +3,14 @@ package main
 import (
 	"context"
 	"fmt"
-	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
+	"github.com/rs/zerolog"
+	"github.com/rs/zerolog/log"
 	"github.com/sudebaker/acb-go/internal/api"
 	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
@@ -20,14 +24,26 @@ import (
 func main() {
 	cfg := config.Load()
 
+	switch cfg.LogLevel {
+	case "debug":
+		zerolog.SetGlobalLevel(zerolog.DebugLevel)
+	case "warn":
+		zerolog.SetGlobalLevel(zerolog.WarnLevel)
+	case "error":
+		zerolog.SetGlobalLevel(zerolog.ErrorLevel)
+	default:
+		zerolog.SetGlobalLevel(zerolog.InfoLevel)
+	}
+	log.Logger = zerolog.New(os.Stderr).With().Timestamp().Logger()
+
 	database, err := db.Open(cfg.PGHost, cfg.PGPort, cfg.PGUser, cfg.PGPassword, cfg.PGDatabase)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal().Err(err).Msg("failed to open database")
 	}
 	defer database.Close()
 
 	if err := db.RunMigrations(database); err != nil {
-		log.Fatal(err)
+		log.Fatal().Err(err).Msg("failed to run migrations")
 	}
 
 	rdb := goredis.NewClient(&goredis.Options{
@@ -36,7 +52,7 @@ func main() {
 		DB:       0,
 	})
 	if cfg.RedisPass == "" {
-		log.Println("WARNING: Redis password (ACB_REDIS_PASS) is not set — using unauthenticated connection")
+		log.Warn().Msg("Redis password (ACB_REDIS_PASS) is not set — using unauthenticated connection")
 	}
 	defer rdb.Close()
 
@@ -53,7 +69,7 @@ func main() {
 		cfg.RustFSBucket,
 	)
 	if err := rustfsClient.EnsureBucket(context.Background()); err != nil {
-		log.Printf("warning: failed to ensure rustfs bucket: %v", err)
+		log.Warn().Err(err).Msg("failed to ensure rustfs bucket")
 	}
 
 	// Dispatcher: webhook push + retry queue
@@ -74,9 +90,32 @@ func main() {
 	timeoutSvc.Start()
 	defer timeoutSvc.Stop()
 
-	r := api.NewRouter(taskRepo, gateRepo, agentRepo, pub, rustfsClient, disp, cfg)
+	r := api.NewRouter(taskRepo, gateRepo, agentRepo, pub, rustfsClient, disp, cfg, database, rdb)
 
-	addr := fmt.Sprintf(":%d", cfg.Port)
-	log.Printf("ACB listening on %s", addr)
-	log.Fatal(http.ListenAndServe(addr, r))
+	srv := &http.Server{Addr: fmt.Sprintf(":%d", cfg.Port), Handler: r}
+
+	go func() {
+		log.Info().Int("port", cfg.Port).Msg("ACB listening")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			log.Fatal().Err(err).Msg("server error")
+		}
+	}()
+
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	<-quit
+	log.Info().Msg("shutting down gracefully")
+
+	disp.Stop()
+	timeoutSvc.Stop()
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Error().Err(err).Msg("server forced to shutdown")
+	}
+
+	rdb.Close()
+	database.Close()
+	log.Info().Msg("server stopped")
 }

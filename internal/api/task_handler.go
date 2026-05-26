@@ -405,6 +405,56 @@ func (h *TaskHandler) UnblockTask(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, 200, task)
 }
 
+// AnswerGate accepts an agent's answer to a gate and transitions it to "asked".
+// The orchestrator then reviews the answer and decides whether to unblock.
+// POST /tasks/{id}/gates/{gate_id}/answer
+func (h *TaskHandler) AnswerGate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	id := chi.URLParam(r, "id")
+	gateID := chi.URLParam(r, "gate_id")
+
+	var input struct {
+		Answer string `json:"answer"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		WriteError(w, 400, "invalid_json", "invalid request body")
+		return
+	}
+	if input.Answer == "" {
+		WriteError(w, 400, "missing_answer", "answer is required")
+		return
+	}
+
+	// Verify the gate exists and belongs to this task
+	gate, err := h.gateRepo.GetGateByID(ctx, gateID)
+	if err != nil {
+		WriteErrorSafe(w, 500, "get_gate_failed", err)
+		return
+	}
+	if gate == nil {
+		WriteError(w, 404, "gate_not_found", "gate not found")
+		return
+	}
+	if gate.TaskID != id {
+		WriteError(w, 400, "gate_mismatch", "gate does not belong to this task")
+		return
+	}
+	if gate.Status != "pending" {
+		WriteError(w, 409, "invalid_gate_status", "gate is not in pending status")
+		return
+	}
+
+	if err := h.gateRepo.AskGate(ctx, gateID, input.Answer); err != nil {
+		WriteErrorSafe(w, 409, "ask_gate_failed", err)
+		return
+	}
+
+	WriteJSON(w, 200, map[string]string{
+		"gate_id": gateID,
+		"status":  "asked",
+	})
+}
+
 func (h *TaskHandler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	id := chi.URLParam(r, "id")

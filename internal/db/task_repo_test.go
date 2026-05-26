@@ -362,7 +362,7 @@ func TestGate_CreatedAtAndAnsweredAt(t *testing.T) {
 	}
 
 	// Transition gate to 'asked' status, then answer it
-	err = repo.AskGate(context.Background(), "gate-001")
+	err = repo.AskGate(context.Background(), "gate-001", "")
 	if err != nil {
 		t.Fatalf("failed to set gate status to asked: %v", err)
 	}

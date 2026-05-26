@@ -99,7 +99,7 @@ func setupRouterWithRustFS(t *testing.T) (*db.TaskRepo, *rustfs.Client, http.Han
 	rustfsClient := rustfs.NewClientWithStore(memStore, "test-bucket")
 
 	cfg := &config.Config{MaxUploadSizeMB: 32}
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient, nil, cfg)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, rustfsClient, nil, cfg, nil, nil)
 	return taskRepo, rustfsClient, r, memStore
 }
 

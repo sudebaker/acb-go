@@ -5,10 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
+	"github.com/rs/zerolog/log"
 	"github.com/sudebaker/acb-go/internal/models"
 )
 
@@ -48,19 +48,19 @@ func scanTaskRow(scanner interface {
 	task.CreatedAt = parseTime(createdAt)
 	task.UpdatedAt = parseTime(updatedAt)
 	if err := json.Unmarshal([]byte(parents), &task.Parents); err != nil {
-		log.Printf("[WARN] scanTaskRow: failed to unmarshal parents: %v", err)
+		log.Warn().Err(err).Str("taskID", task.ID).Msg("scanTaskRow: unmarshal parents failed")
 	}
 	if err := json.Unmarshal([]byte(skills), &task.Skills); err != nil {
-		log.Printf("[WARN] scanTaskRow: failed to unmarshal skills: %v", err)
+		log.Warn().Err(err).Str("taskID", task.ID).Msg("scanTaskRow: unmarshal skills failed")
 	}
 	if err := json.Unmarshal([]byte(requiredSkills), &task.RequiredSkills); err != nil {
-		log.Printf("[WARN] scanTaskRow: failed to unmarshal required_skills: %v", err)
+		log.Warn().Err(err).Str("taskID", task.ID).Msg("scanTaskRow: unmarshal required_skills failed")
 	}
 	if err := json.Unmarshal([]byte(tags), &task.Tags); err != nil {
-		log.Printf("[WARN] scanTaskRow: failed to unmarshal tags: %v", err)
+		log.Warn().Err(err).Str("taskID", task.ID).Msg("scanTaskRow: unmarshal tags failed")
 	}
 	if err := json.Unmarshal([]byte(artifacts), &task.Artifacts); err != nil {
-		log.Printf("[WARN] scanTaskRow: failed to unmarshal artifacts: %v", err)
+		log.Warn().Err(err).Str("taskID", task.ID).Msg("scanTaskRow: unmarshal artifacts failed")
 	}
 	if lastHeartbeat.Valid {
 		task.LastHeartbeat = &lastHeartbeat.Time
@@ -80,7 +80,7 @@ func parseTime(s string) time.Time {
 			return parsed
 		}
 	}
-	log.Printf("[WARN] parseTime: failed to parse %q", s)
+	log.Warn().Str("value", s).Msg("parseTime: failed to parse timestamp")
 	return time.Time{}
 }
 
@@ -259,19 +259,19 @@ func (r *TaskRepo) List(ctx context.Context, status, assignee string, requiredSk
 			t.LastHeartbeat = &lastHeartbeat.Time
 		}
 		if err := json.Unmarshal([]byte(parents), &t.Parents); err != nil {
-			log.Printf("[WARN] List: failed to unmarshal parents: %v", err)
+			log.Warn().Err(err).Str("taskID", t.ID).Msg("List: unmarshal parents failed")
 		}
 		if err := json.Unmarshal([]byte(skills), &t.Skills); err != nil {
-			log.Printf("[WARN] List: failed to unmarshal skills: %v", err)
+			log.Warn().Err(err).Str("taskID", t.ID).Msg("List: unmarshal skills failed")
 		}
 		if err := json.Unmarshal([]byte(reqSkills), &t.RequiredSkills); err != nil {
-			log.Printf("[WARN] List: failed to unmarshal required_skills: %v", err)
+			log.Warn().Err(err).Str("taskID", t.ID).Msg("List: unmarshal required_skills failed")
 		}
 		if err := json.Unmarshal([]byte(tags), &t.Tags); err != nil {
-			log.Printf("[WARN] List: failed to unmarshal tags: %v", err)
+			log.Warn().Err(err).Str("taskID", t.ID).Msg("List: unmarshal tags failed")
 		}
 		if err := json.Unmarshal([]byte(artifacts), &t.Artifacts); err != nil {
-			log.Printf("[WARN] List: failed to unmarshal artifacts: %v", err)
+			log.Warn().Err(err).Str("taskID", t.ID).Msg("List: unmarshal artifacts failed")
 		}
 		tasks = append(tasks, t)
 	}
@@ -382,7 +382,7 @@ func (r *TaskRepo) CompleteTask(ctx context.Context, id, summary string) (*model
 
 	// Promote children whose parents are now all completed
 	if err := r.PromoteChildren(ctx, id); err != nil {
-		log.Printf("[WARN] CompleteTask: promote children for %s: %v", id, err)
+		log.Warn().Err(err).Str("taskID", id).Msg("CompleteTask: promote children failed")
 	}
 
 	return completedTask, nil
@@ -464,7 +464,7 @@ func (r *TaskRepo) ExpirePendingTasks(ctx context.Context, timeoutMinutes int) (
 	for rows.Next() {
 		var id, title string
 		if err := rows.Scan(&id, &title); err != nil {
-			log.Printf("[WARN] ExpirePendingTasks: scan error: %v", err)
+			log.Warn().Err(err).Msg("ExpirePendingTasks: scan error")
 			continue
 		}
 		expiredIDs = append(expiredIDs, id)
@@ -480,7 +480,7 @@ func (r *TaskRepo) ExpirePendingTasks(ctx context.Context, timeoutMinutes int) (
 			id,
 		)
 		if err != nil {
-			log.Printf("[ERROR] ExpirePendingTasks: failed to expire task %s: %v", id, err)
+			log.Error().Err(err).Str("taskID", id).Msg("ExpirePendingTasks: failed to expire task")
 			continue
 		}
 		r.logTaskEvent(ctx, id, "PendingTimeout", "", fmt.Sprintf("Task expired after %d minutes in pending status", timeoutMinutes))
@@ -505,7 +505,7 @@ func (r *TaskRepo) ReleaseAgentTasks(ctx context.Context, agentName string) ([]s
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			log.Printf("[WARN] ReleaseAgentTasks: scan error: %v", err)
+			log.Warn().Err(err).Msg("ReleaseAgentTasks: scan error")
 			continue
 		}
 		released = append(released, id)
@@ -517,7 +517,7 @@ func (r *TaskRepo) ReleaseAgentTasks(ctx context.Context, agentName string) ([]s
 			id,
 		)
 		if err != nil {
-			log.Printf("[ERROR] ReleaseAgentTasks: failed to release task %s: %v", id, err)
+			log.Error().Err(err).Str("taskID", id).Msg("ReleaseAgentTasks: failed to release task")
 			continue
 		}
 		r.logTaskEvent(ctx, id, "StaleAgentRelease", "", fmt.Sprintf("released from stale agent %s", agentName))
@@ -570,7 +570,7 @@ func (r *TaskRepo) ExpireStaleInProgressTasks(ctx context.Context, timeoutMinute
 		var id string
 		var maxRetries, retryCount int
 		if err := rows.Scan(&id, &maxRetries, &retryCount); err != nil {
-			log.Printf("[WARN] ExpireStaleInProgressTasks: scan error: %v", err)
+			log.Warn().Err(err).Msg("ExpireStaleInProgressTasks: scan error")
 			continue
 		}
 		staleIDs = append(staleIDs, id)
@@ -586,7 +586,7 @@ func (r *TaskRepo) ExpireStaleInProgressTasks(ctx context.Context, timeoutMinute
 			fmt.Sprintf("Task timed out after %d minutes without heartbeat", timeoutMinutes), id,
 		)
 		if err != nil {
-			log.Printf("[ERROR] ExpireStaleInProgressTasks: failed to expire task %s: %v", id, err)
+			log.Error().Err(err).Str("taskID", id).Msg("ExpireStaleInProgressTasks: failed to expire task")
 			continue
 		}
 		r.logTaskEvent(ctx, id, "TaskHeartbeatTimeout", "", fmt.Sprintf("Task expired after %d minutes without heartbeat", timeoutMinutes))
@@ -751,7 +751,7 @@ func (r *TaskRepo) GetDependencyGraph(ctx context.Context, taskID string) (*Task
 	if len(task.Parents) > 0 {
 		parents, err := r.getTasksByIDs(ctx, task.Parents)
 		if err != nil {
-			log.Printf("[WARN] GetDependencyGraph: batch load parents: %v", err)
+			log.Warn().Err(err).Str("taskID", taskID).Msg("GetDependencyGraph: batch load parents failed")
 		} else {
 			graph.Parents = parents
 		}
@@ -771,7 +771,7 @@ func (r *TaskRepo) GetDependencyGraph(ctx context.Context, taskID string) (*Task
 	for rows.Next() {
 		var childID string
 		if err := rows.Scan(&childID); err != nil {
-			log.Printf("[WARN] GetDependencyGraph: scan child: %v", err)
+			log.Warn().Err(err).Str("taskID", taskID).Msg("GetDependencyGraph: scan child failed")
 			continue
 		}
 		childIDs = append(childIDs, childID)
@@ -781,7 +781,7 @@ func (r *TaskRepo) GetDependencyGraph(ctx context.Context, taskID string) (*Task
 	if len(childIDs) > 0 {
 		children, err := r.getTasksByIDs(ctx, childIDs)
 		if err != nil {
-			log.Printf("[WARN] GetDependencyGraph: batch load children: %v", err)
+			log.Warn().Err(err).Str("taskID", taskID).Msg("GetDependencyGraph: batch load children failed")
 		} else {
 			graph.Children = children
 		}
@@ -820,7 +820,7 @@ func (r *TaskRepo) PromoteChildren(ctx context.Context, taskID string) error {
 	for rows.Next() {
 		var id string
 		if err := rows.Scan(&id); err != nil {
-			log.Printf("[WARN] PromoteChildren: scan error: %v", err)
+			log.Warn().Err(err).Msg("PromoteChildren: scan error")
 			continue
 		}
 		childIDs = append(childIDs, id)
@@ -830,7 +830,7 @@ func (r *TaskRepo) PromoteChildren(ctx context.Context, taskID string) error {
 		// Verify all parents are completed before promoting
 		allDone, err := r.CheckParentsCompleted(ctx, childID)
 		if err != nil {
-			log.Printf("[WARN] PromoteChildren: check parents for %s: %v", childID, err)
+			log.Warn().Err(err).Str("childID", childID).Msg("PromoteChildren: check parents failed")
 			continue
 		}
 		if allDone {

@@ -24,7 +24,7 @@ func TestRegisterAgent_200(t *testing.T) {
 	// Preregister an agent so we have a valid token for auth
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
 
 	body := `{
 		"name": "test-reg-agent",
@@ -63,7 +63,7 @@ func TestRegisterAgent_NoWebhook(t *testing.T) {
 
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
 
 	body := `{
 		"name": "simple-agent",
@@ -97,7 +97,7 @@ func TestRegisterAgent_MissingName(t *testing.T) {
 
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
-	r := NewRouter(db.NewTaskRepo(d), db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+	r := NewRouter(db.NewTaskRepo(d), db.NewGateRepo(d), agentRepo, nil, nil, nil, nil, nil, nil)
 
 	body := `{"port": 8091}`
 	req := httptest.NewRequest("POST", "/agents", strings.NewReader(body))
@@ -130,7 +130,7 @@ func TestRegisterAgent_Upsert(t *testing.T) {
 
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
 
 	// First registration — use admin token (bootstrap flow, creating a new agent)
 	body1 := `{
@@ -189,7 +189,7 @@ func TestGetAgent_200(t *testing.T) {
 	// Need a valid auth token — use the registered agent
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
 
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
 
 	req := httptest.NewRequest("GET", "/agents/fetch-agent", nil)
 	req.Header.Set("Authorization", "Bearer "+testToken)

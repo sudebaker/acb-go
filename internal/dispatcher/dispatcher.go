@@ -8,12 +8,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"sync"
 	"time"
 
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 
 	"github.com/sudebaker/acb-go/internal/db"
 	"github.com/sudebaker/acb-go/internal/models"
@@ -78,7 +78,7 @@ func (d *Dispatcher) Start() {
 	d.cancel = cancel
 	d.wg.Add(1)
 	go d.processRetryQueue(ctx)
-	log.Println("[dispatcher] started, processing retry queue")
+	log.Info().Msg("dispatcher: started")
 }
 
 // Stop shuts down the retry goroutine.
@@ -87,7 +87,7 @@ func (d *Dispatcher) Stop() {
 		d.cancel()
 	}
 	d.wg.Wait()
-	log.Println("[dispatcher] stopped")
+	log.Info().Msg("dispatcher: stopped")
 }
 
 // DispatchNewTask is called when a new task is created.
@@ -100,7 +100,7 @@ func (d *Dispatcher) DispatchNewTask(task *models.Task) {
 		for _, parentID := range task.Parents {
 			parent, err := d.taskRepo.GetByID(ctx, parentID)
 			if err != nil || parent == nil || parent.Status != "completed" {
-				log.Printf("[dispatcher] task %s has uncompleted parent %s, skipping dispatch", task.ID, parentID)
+				log.Info().Str("taskID", task.ID).Str("parentID", parentID).Msg("dispatcher: uncompleted parent, skipping dispatch")
 				return
 			}
 		}
@@ -108,7 +108,7 @@ func (d *Dispatcher) DispatchNewTask(task *models.Task) {
 
 	agents, err := d.agentRepo.FindMatchingAgents(ctx, task.RequiredSkills)
 	if err != nil {
-		log.Printf("[dispatcher] error finding matching agents: %v", err)
+		log.Error().Err(err).Str("taskID", task.ID).Msg("dispatcher: error finding matching agents")
 		return
 	}
 
@@ -131,7 +131,7 @@ func (d *Dispatcher) NotifyStatusChange(task *models.Task, oldStatus, newStatus,
 
 	agent, err := d.agentRepo.GetByName(ctx, task.Assignee)
 	if err != nil {
-		log.Printf("[dispatcher] error getting agent %s: %v", task.Assignee, err)
+		log.Error().Err(err).Str("agent", task.Assignee).Msg("dispatcher: error getting agent for notify")
 		return
 	}
 	if agent == nil || agent.WebhookURL == "" {
@@ -154,7 +154,7 @@ func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, ol
 
 	// Validate webhook URL before sending
 	if err := ValidateWebhookURL(agent.WebhookURL); err != nil {
-		log.Printf("[dispatcher] invalid webhook URL for agent %s: %v", agent.Name, err)
+		log.Warn().Err(err).Str("agent", agent.Name).Msg("dispatcher: invalid webhook URL for status webhook")
 		return
 	}
 
@@ -167,14 +167,14 @@ func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, ol
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[dispatcher] marshal payload for agent %s: %v", agent.Name, err)
+		log.Error().Err(err).Str("agent", agent.Name).Msg("dispatcher: marshal status payload failed")
 		return
 	}
 
 	// Create request with timestamp header
 	req, err := http.NewRequest("POST", agent.WebhookURL, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("[dispatcher] create request for agent %s: %v", agent.Name, err)
+		log.Error().Err(err).Str("agent", agent.Name).Msg("dispatcher: create status request failed")
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -185,7 +185,7 @@ func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, ol
 		// Decrypt the webhook secret for HMAC signing
 		plaintextSecret, err := db.DecryptWebhookSecret(agent.WebhookSecret)
 		if err != nil {
-			log.Printf("[dispatcher] failed to decrypt webhook secret for agent %s: %v", agent.Name, err)
+			log.Error().Err(err).Str("agent", agent.Name).Msg("dispatcher: decrypt webhook secret for status failed")
 			return
 		}
 		// Include timestamp in HMAC signature to prevent replay attacks
@@ -203,16 +203,16 @@ func (d *Dispatcher) sendStatusWebhook(agent models.Agent, task *models.Task, ol
 
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
-		log.Printf("[dispatcher] status webhook to agent %s failed: %v", agent.Name, err)
+		log.Error().Err(err).Str("agent", agent.Name).Str("action", action).Msg("dispatcher: status webhook failed")
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		log.Printf("[dispatcher] status webhook to agent %s returned status %d", agent.Name, resp.StatusCode)
+		log.Warn().Str("agent", agent.Name).Int("statusCode", resp.StatusCode).Str("action", action).Msg("dispatcher: status webhook returned error")
 		return
 	}
-	log.Printf("[dispatcher] status webhook to agent %s succeeded (action=%s, status=%s)", agent.Name, action, newStatus)
+	log.Info().Str("agent", agent.Name).Str("action", action).Str("newStatus", newStatus).Msg("dispatcher: status webhook succeeded")
 }
 
 // sendWebhook POSTs the task to an agent's webhook URL.
@@ -231,7 +231,7 @@ func (d *Dispatcher) sendWebhookWithSemaphore(agent models.Agent, task *models.T
 func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt int) {
 	// Validate webhook URL before sending
 	if err := ValidateWebhookURL(agent.WebhookURL); err != nil {
-		log.Printf("[dispatcher] invalid webhook URL for agent %s: %v", agent.Name, err)
+		log.Warn().Err(err).Str("agent", agent.Name).Msg("dispatcher: invalid webhook URL")
 		return
 	}
 
@@ -242,14 +242,14 @@ func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt 
 	}
 	body, err := json.Marshal(payload)
 	if err != nil {
-		log.Printf("[dispatcher] marshal payload for agent %s: %v", agent.Name, err)
+		log.Error().Err(err).Str("agent", agent.Name).Msg("dispatcher: marshal payload failed")
 		return
 	}
 
 	// Create request with timestamp header
 	req, err := http.NewRequest("POST", agent.WebhookURL, bytes.NewReader(body))
 	if err != nil {
-		log.Printf("[dispatcher] create request for agent %s: %v", agent.Name, err)
+		log.Error().Err(err).Str("agent", agent.Name).Msg("dispatcher: create request failed")
 		return
 	}
 	req.Header.Set("Content-Type", "application/json")
@@ -260,7 +260,7 @@ func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt 
 		// Decrypt the webhook secret for HMAC signing
 		plaintextSecret, err := db.DecryptWebhookSecret(agent.WebhookSecret)
 		if err != nil {
-			log.Printf("[dispatcher] failed to decrypt webhook secret for agent %s: %v", agent.Name, err)
+			log.Error().Err(err).Str("agent", agent.Name).Msg("dispatcher: decrypt webhook secret failed")
 			return
 		}
 		// Include timestamp in HMAC signature to prevent replay attacks
@@ -278,18 +278,18 @@ func (d *Dispatcher) sendWebhook(agent models.Agent, task *models.Task, attempt 
 
 	resp, err := d.httpClient.Do(req)
 	if err != nil {
-		log.Printf("[dispatcher] webhook to agent %s failed (attempt %d): %v", agent.Name, attempt+1, err)
+		log.Error().Err(err).Str("agent", agent.Name).Int("attempt", attempt+1).Msg("dispatcher: webhook failed")
 		d.enqueueRetry(agent.Name, task.ID, attempt)
 		return
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode >= 300 {
-		log.Printf("[dispatcher] webhook to agent %s returned status %d (attempt %d)", agent.Name, resp.StatusCode, attempt+1)
+		log.Warn().Str("agent", agent.Name).Int("statusCode", resp.StatusCode).Int("attempt", attempt+1).Msg("dispatcher: webhook returned error status")
 		d.enqueueRetry(agent.Name, task.ID, attempt)
 		return
 	}
-	log.Printf("[dispatcher] webhook to agent %s succeeded (status %d)", agent.Name, resp.StatusCode)
+	log.Info().Str("agent", agent.Name).Int("statusCode", resp.StatusCode).Msg("dispatcher: webhook succeeded")
 }
 
 // enqueueRetry pushes a failed task dispatch to Redis for later retry.
@@ -300,7 +300,7 @@ func (d *Dispatcher) enqueueRetry(agentName, taskID string, attempt int) {
 	entry := retryEntry{TaskID: taskID, AgentName: agentName, Attempt: attempt + 1}
 	data, err := json.Marshal(entry)
 	if err != nil {
-		log.Printf("[dispatcher] marshal retry entry: %v", err)
+		log.Error().Err(err).Msg("dispatcher: marshal retry entry failed")
 		return
 	}
 	key := retryQueuePrefix + agentName
@@ -309,7 +309,7 @@ func (d *Dispatcher) enqueueRetry(agentName, taskID string, attempt int) {
 	d.rdb.LTrim(context.Background(), key, -(maxRetryQueueSize - 1), -1)
 
 	if err := d.rdb.RPush(context.Background(), key, data).Err(); err != nil {
-		log.Printf("[dispatcher] failed to enqueue retry for agent %s task %s: %v", agentName, taskID, err)
+		log.Error().Err(err).Str("agent", agentName).Str("taskID", taskID).Msg("dispatcher: enqueue retry failed")
 	}
 }
 
@@ -358,12 +358,12 @@ func (d *Dispatcher) retryEntry(data string) {
 	ctx := context.Background()
 	var entry retryEntry
 	if err := json.Unmarshal([]byte(data), &entry); err != nil {
-		log.Printf("[dispatcher] invalid retry entry %q: %v", data, err)
+		log.Error().Err(err).Str("data", data).Msg("dispatcher: invalid retry entry")
 		return
 	}
 
 	if entry.Attempt >= maxRetries {
-		log.Printf("[dispatcher] max retries exceeded for task %s to agent %s, giving up", entry.TaskID, entry.AgentName)
+		log.Warn().Str("taskID", entry.TaskID).Str("agent", entry.AgentName).Msg("dispatcher: max retries exceeded, giving up")
 		return
 	}
 
@@ -373,12 +373,12 @@ func (d *Dispatcher) retryEntry(data string) {
 		s = 30
 	}
 	backoff := time.Duration(s) * time.Second
-	log.Printf("[dispatcher] retry %d/%d for task %s to agent %s (backoff %v)", entry.Attempt+1, maxRetries, entry.TaskID, entry.AgentName, backoff)
+	log.Info().Int("attempt", entry.Attempt+1).Int("maxRetries", maxRetries).Str("taskID", entry.TaskID).Str("agent", entry.AgentName).Dur("backoff", backoff).Msg("dispatcher: retry with backoff")
 	time.Sleep(backoff)
 
 	task, err := d.taskRepo.GetByID(ctx, entry.TaskID)
 	if err != nil || task == nil {
-		log.Printf("[dispatcher] task %s not found, skipping retry", entry.TaskID)
+		log.Warn().Str("taskID", entry.TaskID).Msg("dispatcher: task not found, skipping retry")
 		return
 	}
 	// Only retry tasks still pending or claimed
@@ -388,11 +388,11 @@ func (d *Dispatcher) retryEntry(data string) {
 
 	agent, err := d.agentRepo.GetByName(ctx, entry.AgentName)
 	if err != nil || agent == nil || agent.WebhookURL == "" {
-		log.Printf("[dispatcher] agent %s not found or no webhook, skipping retry", entry.AgentName)
+		log.Warn().Str("agent", entry.AgentName).Msg("dispatcher: agent not found or no webhook, skipping retry")
 		return
 	}
 
-	log.Printf("[dispatcher] retry %d/%d for task %s to agent %s", entry.Attempt, maxRetries, entry.TaskID, entry.AgentName)
+	log.Info().Int("attempt", entry.Attempt).Int("maxRetries", maxRetries).Str("taskID", entry.TaskID).Str("agent", entry.AgentName).Msg("dispatcher: retrying webhook")
 	d.sendWebhook(*agent, task, entry.Attempt)
 }
 

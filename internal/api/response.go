@@ -2,8 +2,9 @@ package api
 
 import (
 	"encoding/json"
-	"log"
 	"net/http"
+
+	"github.com/rs/zerolog/log"
 )
 
 func WriteJSON(w http.ResponseWriter, status int, data interface{}) {
@@ -24,7 +25,7 @@ func WriteError(w http.ResponseWriter, status int, code, message string) {
 // WriteErrorSafe logs the error and returns a generic message to the client.
 func WriteErrorSafe(w http.ResponseWriter, status int, code string, err error) {
 	if err != nil {
-		log.Printf("[ERROR] %s: %v", code, err)
+		log.Error().Err(err).Str("code", code).Msg("internal error")
 	}
 	WriteError(w, status, code, "internal server error")
 }

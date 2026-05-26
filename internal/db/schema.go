@@ -2,7 +2,8 @@ package db
 
 import (
 	"database/sql"
-	"log"
+
+	"github.com/rs/zerolog/log"
 )
 
 func RunMigrations(db *sql.DB) error {
@@ -106,7 +107,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_last_heartbeat ON tasks(last_heartbeat);
 		if m.version <= currentVersion {
 			continue
 		}
-		log.Printf("[DB] Applying migration version %d", m.version)
+		log.Info().Int("version", m.version).Msg("applying migration")
 		tx, err := db.Begin()
 		if err != nil {
 			return err
@@ -122,7 +123,7 @@ CREATE INDEX IF NOT EXISTS idx_tasks_last_heartbeat ON tasks(last_heartbeat);
 		if err := tx.Commit(); err != nil {
 			return err
 		}
-		log.Printf("[DB] Migration version %d applied", m.version)
+		log.Info().Int("version", m.version).Msg("migration applied")
 	}
 
 	return nil

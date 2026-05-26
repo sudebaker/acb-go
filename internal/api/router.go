@@ -1,9 +1,10 @@
 package api
 
 import (
-	"net/http"
+	"database/sql"
 	"time"
 
+	goredis "github.com/redis/go-redis/v9"
 	"github.com/sudebaker/acb-go/internal/config"
 	"github.com/sudebaker/acb-go/internal/db"
 	acbredis "github.com/sudebaker/acb-go/internal/redis"
@@ -14,7 +15,7 @@ import (
 	"golang.org/x/time/rate"
 )
 
-func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher, rustfsClient *rustfs.Client, disp *dispatcher.Dispatcher, cfg *config.Config) *chi.Mux {
+func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.AgentRepo, pub *acbredis.Publisher, rustfsClient *rustfs.Client, disp *dispatcher.Dispatcher, cfg *config.Config, database *sql.DB, rdb *goredis.Client) *chi.Mux {
 	r := chi.NewRouter()
 
 	r.Use(chimw.RequestID)
@@ -26,9 +27,8 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 		r.Use(AuthMiddleware(agentRepo))
 	}
 
-	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
-		WriteJSON(w, 200, map[string]string{"status": "ok"})
-	})
+	hh := NewHealthHandler(database, rdb, rustfsClient)
+	r.Get("/health", hh.Check)
 
 	if taskRepo != nil && gateRepo != nil {
 		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo, agentRepo: agentRepo, pub: pub, dispatcher: disp, cfg: cfg}
@@ -45,6 +45,7 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 		r.Post("/tasks/{id}/heartbeat", h.TaskHeartbeat)
 		r.Get("/tasks/{id}/events", h.ListTaskEvents)
 		r.Get("/tasks/{id}/graph", h.TaskGraph)
+		r.Post("/tasks/{id}/gates/{gate_id}/answer", h.AnswerGate)
 	}
 
 	if taskRepo != nil && agentRepo != nil {

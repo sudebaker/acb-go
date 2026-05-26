@@ -20,10 +20,33 @@ Tokens are validated against the `agents` table. Requests with invalid or missin
 
 **Auth:** None (public)
 
-**Response `200`:**
+Returns the status of all system dependencies.
+
+**Response `200` (all healthy):**
 ```json
-{"status": "ok"}
+{
+  "status": "ok",
+  "checks": {
+    "database": {"status": "ok"},
+    "redis": {"status": "ok"},
+    "storage": {"status": "ok"}
+  }
+}
 ```
+
+**Response `200` (degraded — some dependencies unavailable):**
+```json
+{
+  "status": "degraded",
+  "checks": {
+    "database": {"status": "ok"},
+    "redis": {"status": "error", "error": "dial tcp: ..."},
+    "storage": {"status": "disabled"}
+  }
+}
+```
+
+The endpoint always returns HTTP 200 so that load balancers and orchestration systems do not kill the process for transient failures. Dependencies not configured (e.g., Redis or RustFS) are reported as `"disabled"` rather than `"error"`.
 
 ---
 
@@ -40,6 +63,16 @@ pending ──→ claimed ──→ in_progress ──→ completed
 ```
 
 Valid transitions are enforced server-side. Invalid transitions return `409 Conflict`.
+
+### Gate Lifecycle
+
+```
+gate: pending ──→ asked (agent answers)
+       asked ──→ answered (orchestrator reviews and decides)
+       answered ──→ resolved (orchestrator unblocks task)
+```
+
+When a task is blocked, a gate is created in `pending` status. The assigned agent receives a notification and can submit their answer. The orchestrator then reviews the agent's response and decides whether to unblock the task (either auto-accepting the answer or forwarding to a human).
 
 ### Pending Task Timeout
 
@@ -253,7 +286,7 @@ Block a task on a gate (human intervention needed).
 
 ### `POST /tasks/:id/unblock`
 
-Unblock a task by answering its gate (used by orchestrator).
+Unblock a task by resolving its gate (used by orchestrator).
 
 **Auth:** Bearer token required
 
@@ -262,7 +295,7 @@ Unblock a task by answering its gate (used by orchestrator).
 {"gate_id": "g_001"}
 ```
 
-The gate must be in `answered` status (answer must have been provided via `AnswerGate`).
+The gate must be in `answered` status (orchestrator must have called `POST /agents` → `AnswerGate` or provided the answer directly).
 
 **Response `200`:**
 ```json
@@ -271,6 +304,34 @@ The gate must be in `answered` status (answer must have been provided via `Answe
 
 **Response `409`:**
 - If gate cannot be resolved
+
+---
+
+### `POST /tasks/:id/gates/:gate_id/answer`
+
+Submit an agent's answer to a gate. The agent transitions the gate from `pending` to `asked` with their response. The orchestrator later reviews the answer and decides whether to unblock.
+
+**Auth:** Bearer token required
+
+**Request body:**
+```json
+{"answer": "I recommend proceeding with the deployment. All checks passed."}
+```
+
+**Response `200`:**
+```json
+{"gate_id": "g_001", "status": "asked"}
+```
+
+**Response `400`:**
+- `missing_answer` — answer field is required
+- `gate_mismatch` — gate does not belong to the task
+
+**Response `404`:**
+- `gate_not_found` — gate does not exist
+
+**Response `409`:**
+- `invalid_gate_status` — gate is not in `pending` status
 
 ---
 
@@ -509,6 +570,11 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 | `missing_assignee` | 400 | Assignee is required for claim |
 | `missing_fields` | 400 | Gate fields required for block |
 | `missing_gate_id` | 400 | Gate ID required for unblock |
+| `missing_answer` | 400 | Answer is required for gate answer |
+| `gate_mismatch` | 400 | Gate does not belong to the specified task |
+| `gate_not_found` | 404 | Gate does not exist |
+| `invalid_gate_status` | 409 | Gate is not in pending status |
+| `ask_gate_failed` | 409 | Gate could not be transitioned to asked |
 | `missing_name` | 400 | Agent name required for heartbeat |
 | `missing_file` | 400 | File field missing in upload |
 | `empty_file` | 400 | Uploaded file is empty |

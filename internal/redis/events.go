@@ -3,9 +3,9 @@ package redis
 import (
 	"context"
 	"encoding/json"
-	"log"
 
 	goredis "github.com/redis/go-redis/v9"
+	"github.com/rs/zerolog/log"
 )
 
 const (
@@ -80,7 +80,7 @@ func (p *Publisher) PublishTaskEvent(event, taskID, agent, gateID, summary strin
 
 	data, err := json.Marshal(msg)
 	if err != nil {
-		log.Printf("redis: marshal event: %v", err)
+		log.Error().Err(err).Msg("redis: marshal event")
 		return
 	}
 
@@ -88,7 +88,7 @@ func (p *Publisher) PublishTaskEvent(event, taskID, agent, gateID, summary strin
 
 	for _, channel := range channels {
 		if err := p.client.Publish(context.Background(), channel, string(data)).Err(); err != nil {
-			log.Printf("redis: publish to %s: %v", channel, err)
+			log.Error().Err(err).Str("channel", channel).Msg("redis: publish failed")
 		}
 	}
 }

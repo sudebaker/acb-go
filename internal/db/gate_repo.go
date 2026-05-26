@@ -70,10 +70,30 @@ func (r *GateRepo) AnswerGate(ctx context.Context, gateID, answer string) error 
 	return nil
 }
 
-func (r *GateRepo) AskGate(ctx context.Context, gateID string) error {
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE gates SET status = 'asked' WHERE gate_id = $1 AND status = 'pending'`,
+func (r *GateRepo) GetGateByID(ctx context.Context, gateID string) (*models.Gate, error) {
+	var g models.Gate
+	var answeredAt sql.NullTime
+	err := r.db.QueryRowContext(ctx,
+		`SELECT gate_id, task_id, question, ask, status, answer, created_at, answered_at
+		 FROM gates WHERE gate_id = $1`,
 		gateID,
+	).Scan(&g.GateID, &g.TaskID, &g.Question, &g.Ask, &g.Status, &g.Answer, &g.CreatedAt, &answeredAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get gate by id: %w", err)
+	}
+	if answeredAt.Valid {
+		g.AnsweredAt = &answeredAt.Time
+	}
+	return &g, nil
+}
+
+func (r *GateRepo) AskGate(ctx context.Context, gateID, answer string) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE gates SET status = 'asked', answer = $1 WHERE gate_id = $2 AND status = 'pending'`,
+		answer, gateID,
 	)
 	if err != nil {
 		return fmt.Errorf("ask gate: %w", err)

@@ -90,7 +90,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "worker-a", Token: "e2e-token"})
 
-	r := api.NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
+	r := api.NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
 
 	auth := func(method, target, body string) *http.Request {
 		req := httptest.NewRequest(method, target, strings.NewReader(body))
@@ -148,7 +148,7 @@ func TestFullTaskLifecycle(t *testing.T) {
 
 	// POST /tasks/:id/unblock → 200, status=in_progress
 	// Gate was created by block; transition it to answered
-	gateRepo.AskGate(context.Background(), "g001")
+	gateRepo.AskGate(context.Background(), "g001", "")
 	gateRepo.AnswerGate(context.Background(), "g001", "yes")
 
 	req = auth("POST", "/tasks/t001/unblock", `{"gate_id":"g001"}`)

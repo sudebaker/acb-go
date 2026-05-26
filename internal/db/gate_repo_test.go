@@ -58,7 +58,7 @@ func TestAnswerGate(t *testing.T) {
 	repo.CreateGate(context.Background(), &models.Gate{GateID: "g001", TaskID: "t001", Question: "Q1"})
 
 	// Transition gate to asked for testing
-	repo.AskGate(context.Background(), "g001")
+	repo.AskGate(context.Background(), "g001", "")
 
 	if err := repo.AnswerGate(context.Background(), "g001", "Yes"); err != nil {
 		t.Fatal(err)
@@ -88,7 +88,7 @@ func TestResolveGate(t *testing.T) {
 
 	repo := NewGateRepo(db)
 	repo.CreateGate(context.Background(), &models.Gate{GateID: "g001", TaskID: "t001", Question: "Q1"})
-	repo.AskGate(context.Background(), "g001")
+	repo.AskGate(context.Background(), "g001", "")
 	repo.AnswerGate(context.Background(), "g001", "Yes")
 
 	if err := repo.ResolveGate(context.Background(), "g001"); err != nil {

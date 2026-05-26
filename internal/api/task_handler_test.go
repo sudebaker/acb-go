@@ -75,7 +75,7 @@ func setupRouter(t *testing.T) (*sql.DB, http.Handler) {
 	gateRepo := db.NewGateRepo(d)
 	agentRepo := db.NewAgentRepo(d)
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
-	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
 	return d, r
 }
 
@@ -346,7 +346,7 @@ func TestUnblockTask_200(t *testing.T) {
 	taskRepo.StartTask(context.Background(), "t001")
 	taskRepo.UpdateStatus(context.Background(), "t001", "blocked")
 	gateRepo.CreateGate(context.Background(), &models.Gate{GateID: "g001", TaskID: "t001", Question: "Q?"})
-	gateRepo.AskGate(context.Background(), "g001")
+	gateRepo.AskGate(context.Background(), "g001", "")
 	gateRepo.AnswerGate(context.Background(), "g001", "yes")
 
 	req := authRequest("POST", "/tasks/t001/unblock", `{"gate_id":"g001"}`)
@@ -404,7 +404,7 @@ func TestDispatchNext_MatchingTask(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	agentRepo := db.NewAgentRepo(d)
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken, Skills: []string{"go", "testing"}})
-	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil, nil, nil)
 
 	// Create a task matching the agent's skills
 	taskRepo.Create(context.Background(), &models.Task{ID: "dispatch-1", Title: "go task", RequiredSkills: []string{"go"}, Priority: 5})
@@ -429,7 +429,7 @@ func TestDispatchNext_NoMatchingTask(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	agentRepo := db.NewAgentRepo(d)
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken, Skills: []string{"python"}})
-	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil, nil, nil)
 
 	// Create a task requiring "rust" — agent doesn't have it
 	taskRepo.Create(context.Background(), &models.Task{ID: "dispatch-2", Title: "rust task", RequiredSkills: []string{"rust"}})
@@ -448,7 +448,7 @@ func TestDispatchNext_NoPendingTasks(t *testing.T) {
 	d := setupTestDB(t)
 	agentRepo := db.NewAgentRepo(d)
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken, Skills: []string{"go"}})
-	r := NewRouter(db.NewTaskRepo(d), db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+	r := NewRouter(db.NewTaskRepo(d), db.NewGateRepo(d), agentRepo, nil, nil, nil, nil, nil, nil)
 
 	// No tasks created at all — should return 204
 	req := httptest.NewRequest("GET", "/tasks/dispatch?agent=test-agent", nil)
@@ -466,7 +466,7 @@ func TestDispatchNext_UnknownAgent(t *testing.T) {
 	taskRepo := db.NewTaskRepo(d)
 	agentRepo := db.NewAgentRepo(d)
 	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
-	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil)
+	r := NewRouter(taskRepo, db.NewGateRepo(d), agentRepo, nil, nil, nil, nil, nil, nil)
 
 	taskRepo.Create(context.Background(), &models.Task{ID: "dispatch-3", Title: "task"})
 
