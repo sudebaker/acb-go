@@ -46,6 +46,7 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 		r.Get("/tasks/{id}/events", h.ListTaskEvents)
 		r.Get("/tasks/{id}/graph", h.TaskGraph)
 		r.Post("/tasks/{id}/gates/{gate_id}/answer", h.AnswerGate)
+		r.Post("/tasks/{id}/gates/{gate_id}/approve", h.ApproveGate)
 	}
 
 	if taskRepo != nil && agentRepo != nil {

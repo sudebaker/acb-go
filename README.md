@@ -6,14 +6,15 @@
 
 | Pillar | Technology | Role |
 |--------|-----------|------|
-| **Persistence** | SQLite (`/var/lib/acb/acb.db`) | Durable state: tasks, gates, agents. WAL mode with busy timeout for concurrent reads. |
+| **Persistence** | PostgreSQL | Durable state: tasks, gates, agents. |
 | **Signaling** | Redis Pub/Sub | Real-time event notifications (fire-and-forget, non-blocking). No state stored. |
 | **Storage** | RustFS (S3-like) | Binary artifact storage via Bucket/Key model. |
 
 ## Quick Start
 
 ### Prerequisites
-- Go 1.22+ (CGO required for `go-sqlite3`)
+- Go 1.22+
+- PostgreSQL 16+
 - Redis 7+ (`docker run -d --name redis -p 6379:6379 redis:7-alpine`)
 - RustFS instance (optional for dev)
 
@@ -36,7 +37,11 @@ All environment variables are optional (defaults shown):
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `ACB_PORT` | `8090` | HTTP listen port |
-| `ACB_DB_PATH` | `/var/lib/acb/acb.db` | SQLite database path |
+| `ACB_PG_HOST` | `localhost` | PostgreSQL host |
+| `ACB_PG_PORT` | `5433` | PostgreSQL port |
+| `ACB_PG_USER` | `acb` | PostgreSQL user |
+| `ACB_PG_PASSWORD` | `acb-secure-pg-pass-2026` | PostgreSQL password |
+| `ACB_PG_DATABASE` | `acb` | PostgreSQL database name |
 | `ACB_REDIS_ADDR` | `localhost:6379` | Redis server address |
 | `ACB_REDIS_PASS` | `` | Redis password (empty = no auth) |
 | `ACB_RUSTFS_ENDPOINT` | `http://localhost:8085` | RustFS endpoint |
@@ -45,7 +50,7 @@ All environment variables are optional (defaults shown):
 | `ACB_ARTIFACT_TTL_DAYS` | `30` | Days before artifacts are auto-cleaned |
 | `ACB_LOG_LEVEL` | `info` | Logging level |
 
-## API Overview (14 endpoints)
+## API Overview (16 endpoints)
 
 ### Tasks
 | Method | Path | Description |
@@ -57,7 +62,9 @@ All environment variables are optional (defaults shown):
 | `POST` | `/tasks/:id/claim` | Claim a task for an agent |
 | `POST` | `/tasks/:id/start` | Start execution |
 | `POST` | `/tasks/:id/block` | Block on a gate (human intervention) |
-| `POST` | `/tasks/:id/unblock` | Unblock via gate answer |
+| `POST` | `/tasks/:id/unblock` | Unblock via gate resolution |
+| `POST` | `/tasks/:id/gates/:gate_id/answer` | Submit gate answer (agent) |
+| `POST` | `/tasks/:id/gates/:gate_id/approve` | Approve gate answer (orchestrator) |
 | `POST` | `/tasks/:id/complete` | Complete with summary |
 | `POST` | `/tasks/:id/fail` | Mark as failed |
 
@@ -80,8 +87,11 @@ Full API reference at [`docs/api-reference.md`](docs/api-reference.md).
 
 ```
 pending → claimed → in_progress → completed
-                            ↘ blocked → in_progress
-                            ↘ failed
+                             ↘ blocked → in_progress (via unblock)
+                             ↘ failed
+
+Gate lifecycle (when blocked):
+pending → asked (agent answers) → answered (orchestrator approves) → resolved (unblock)
 ```
 
 Transitions enforce valid state changes server-side.
@@ -149,12 +159,12 @@ POST /agents
 
 ```bash
 go test ./...          # all tests (48+ tests)
-go test -v ./internal/db/   # repository tests (SQLite, single-writer)
+go test -v ./internal/db/   # repository tests (PostgreSQL, set ACB_PG_* vars)
 go test -v ./internal/api/  # handler + auth + rate limiter tests
 go test -v ./tests/         # e2e lifecycle test
 ```
 
-Tests require no external services. Redis tests nil-safe. DB tests use `t.TempDir()` for isolation.
+Tests require a running PostgreSQL (set `ACB_PG_HOST`, `ACB_PG_PORT`, `ACB_PG_USER`, `ACB_PG_PASSWORD`, `ACB_PG_DATABASE`). Redis tests are nil-safe.
 
 ## Project Structure
 
@@ -162,11 +172,11 @@ Tests require no external services. Redis tests nil-safe. DB tests use `t.TempDi
 main.go              — entry point, wires DB → repos → Redis → dispatcher → router → HTTP
 internal/
   config/config.go   — environment loader
-  db/                — SQLite schema, migrations, TaskRepo, GateRepo, AgentRepo
+   db/                — PostgreSQL migrations, TaskRepo, GateRepo, AgentRepo
   api/               — chi router, handlers, auth middleware, rate limiter, response helpers
   dispatcher/        — webhook push dispatcher with SSRF validation + retry queue
   models/            — Task, Gate, Agent structs
-  redis/             — Publisher with 7 event types, fire-and-forget
+   redis/             — Publisher with 9 event types, fire-and-forget
 tests/
 ```
 docs/

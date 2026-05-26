@@ -358,6 +358,51 @@ func TestUnblockTask_200(t *testing.T) {
 	}
 }
 
+func TestApproveGate_200(t *testing.T) {
+	d, r := setupRouter(t)
+	gateRepo := db.NewGateRepo(d)
+	taskRepo := db.NewTaskRepo(d)
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	taskRepo.ClaimTask(context.Background(), "t001", "worker-a")
+	taskRepo.StartTask(context.Background(), "t001")
+	taskRepo.UpdateStatus(context.Background(), "t001", "blocked")
+	gateRepo.CreateGate(context.Background(), &models.Gate{GateID: "g001", TaskID: "t001", Question: "Q?"})
+	gateRepo.AskGate(context.Background(), "g001", "my answer")
+
+	req := authRequest("POST", "/tasks/t001/gates/g001/approve", `{"answer":"approved"}`)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Errorf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp map[string]string
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["status"] != "answered" {
+		t.Errorf("expected status 'answered', got %q", resp["status"])
+	}
+}
+
+func TestApproveGate_WrongState_409(t *testing.T) {
+	d, r := setupRouter(t)
+	gateRepo := db.NewGateRepo(d)
+	taskRepo := db.NewTaskRepo(d)
+	taskRepo.Create(context.Background(), &models.Task{ID: "t001", Title: "test"})
+	taskRepo.ClaimTask(context.Background(), "t001", "worker-a")
+	taskRepo.StartTask(context.Background(), "t001")
+	taskRepo.UpdateStatus(context.Background(), "t001", "blocked")
+	gateRepo.CreateGate(context.Background(), &models.Gate{GateID: "g001", TaskID: "t001", Question: "Q?"})
+	// gate is "pending", not "asked"
+
+	req := authRequest("POST", "/tasks/t001/gates/g001/approve", `{"answer":"approved"}`)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 409 {
+		t.Errorf("expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestListTaskEvents_200(t *testing.T) {
 	_, r := setupRouter(t)
 	req := authRequest("POST", "/tasks", `{"id":"t-events-1","title":"event test task"}`)

@@ -11,13 +11,15 @@ import (
 const (
 	ChannelPrefix = "agent:"
 
-	EventNewTask     = "new_task"
-	EventTaskClaimed = "task_claimed"
-	EventTaskStarted = "task_started"
-	EventTaskBlocked = "task_blocked"
-	EventTaskUnblock = "task_unblocked"
-	EventTaskDone    = "task_completed"
-	EventTaskFailed  = "task_failed"
+	EventNewTask         = "new_task"
+	EventTaskClaimed     = "task_claimed"
+	EventTaskStarted     = "task_started"
+	EventTaskBlocked     = "task_blocked"
+	EventTaskUnblock     = "task_unblocked"
+	EventTaskDone        = "task_completed"
+	EventTaskFailed      = "task_failed"
+	EventTaskGateAnswered = "gate_answered"
+	EventTaskGateApproved = "gate_approved"
 
 	ChannelPending = "tasks:pending"
 	ChannelGates   = "tasks:gates"
@@ -54,7 +56,7 @@ func RouteChannels(event, agent string) []string {
 		if agent != "" {
 			channels = append(channels, ChannelPrefix+agent)
 		}
-	case EventTaskBlocked, EventTaskUnblock:
+	case EventTaskBlocked, EventTaskUnblock, EventTaskGateAnswered, EventTaskGateApproved:
 		channels = append(channels, ChannelGates)
 	case EventTaskDone, EventTaskFailed:
 		if agent != "" {

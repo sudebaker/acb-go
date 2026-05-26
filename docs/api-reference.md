@@ -67,12 +67,12 @@ Valid transitions are enforced server-side. Invalid transitions return `409 Conf
 ### Gate Lifecycle
 
 ```
-gate: pending ──→ asked (agent answers)
-       asked ──→ answered (orchestrator reviews and decides)
-       answered ──→ resolved (orchestrator unblocks task)
+gate: pending ──→ asked (agent answers — POST .../gates/:id/answer)
+       asked ──→ answered (orchestrator approves — POST .../gates/:id/approve)
+       answered ──→ resolved (orchestrator unblocks — POST .../unblock)
 ```
 
-When a task is blocked, a gate is created in `pending` status. The assigned agent receives a notification and can submit their answer. The orchestrator then reviews the agent's response and decides whether to unblock the task (either auto-accepting the answer or forwarding to a human).
+When a task is blocked, a gate is created in `pending` status. The assigned agent receives a notification and can submit their answer via `POST /tasks/:id/gates/:gate_id/answer`, transitioning the gate to `asked`. The orchestrator reviews the answer and either approves it via `POST /tasks/:id/gates/:gate_id/approve` (transitioning to `answered`) or rejects it (agent must answer again). Once `answered`, the orchestrator calls `POST /tasks/:id/unblock` to resolve the gate and return the task to `in_progress`.
 
 ### Pending Task Timeout
 
@@ -295,7 +295,7 @@ Unblock a task by resolving its gate (used by orchestrator).
 {"gate_id": "g_001"}
 ```
 
-The gate must be in `answered` status (orchestrator must have called `POST /agents` → `AnswerGate` or provided the answer directly).
+The gate must be in `answered` status. To reach `answered`: the agent calls `POST /tasks/:id/gates/:gate_id/answer` (pending→asked), then the orchestrator calls `POST /tasks/:id/gates/:gate_id/approve` (asked→answered).
 
 **Response `200`:**
 ```json
@@ -332,6 +332,35 @@ Submit an agent's answer to a gate. The agent transitions the gate from `pending
 
 **Response `409`:**
 - `invalid_gate_status` — gate is not in `pending` status
+
+---
+
+### `POST /tasks/:id/gates/:gate_id/approve`
+
+Approve an agent's gate answer. The orchestrator transitions the gate from `asked` to `answered`, signaling that the gate answer is accepted and the task can be unblocked.
+
+**Auth:** Bearer token required
+
+**Request body:**
+```json
+{"answer": "Approved — proceed with deployment."}
+```
+
+**Response `200`:**
+```json
+{"gate_id": "g_001", "status": "answered"}
+```
+
+**Response `400`:**
+- `missing_answer` — answer field is required
+- `gate_mismatch` — gate does not belong to the task
+
+**Response `404`:**
+- `gate_not_found` — gate does not exist
+
+**Response `409`:**
+- `invalid_gate_status` — gate is not in `asked` status
+- `approve_failed` — gate could not be transitioned to answered
 
 ---
 
@@ -575,6 +604,7 @@ Delete a specific artifact by its key. Removes both the RustFS object and the ta
 | `gate_not_found` | 404 | Gate does not exist |
 | `invalid_gate_status` | 409 | Gate is not in pending status |
 | `ask_gate_failed` | 409 | Gate could not be transitioned to asked |
+| `approve_failed` | 409 | Gate could not be transitioned to answered |
 | `missing_name` | 400 | Agent name required for heartbeat |
 | `missing_file` | 400 | File field missing in upload |
 | `empty_file` | 400 | Uploaded file is empty |
@@ -671,6 +701,8 @@ Published on the following channels depending on the event type:
 | `task_started` | Task started | `{"event":"task_started","task_id":"t_123"}` |
 | `task_blocked` | Task blocked | `{"event":"task_blocked","task_id":"t_123"}` |
 | `task_unblocked` | Task unblocked | `{"event":"task_unblocked","task_id":"t_123"}` |
+| `gate_answered` | Gate answer submitted | `{"event":"gate_answered","task_id":"t_123","gate_id":"g_001"}` |
+| `gate_approved` | Gate answer approved | `{"event":"gate_approved","task_id":"t_123","gate_id":"g_001"}` |
 | `task_completed` | Task completed | `{"event":"task_completed","task_id":"t_123"}` |
 | `task_failed` | Task failed | `{"event":"task_failed","task_id":"t_123"}` |
 
@@ -683,7 +715,11 @@ Events are fire-and-forget via goroutines. Redis publish errors are logged but n
 | Variable | Description | Default |
 |---|---|---|
 | `ACB_PORT` | HTTP server port | `8090` |
-| `ACB_DB_PATH` | SQLite database path | `/var/lib/acb/acb.db` |
+| `ACB_PG_HOST` | PostgreSQL host | `localhost` |
+| `ACB_PG_PORT` | PostgreSQL port | `5433` |
+| `ACB_PG_USER` | PostgreSQL user | `acb` |
+| `ACB_PG_PASSWORD` | PostgreSQL password | `acb-secure-pg-pass-2026` |
+| `ACB_PG_DATABASE` | PostgreSQL database name | `acb` |
 | `ACB_REDIS_ADDR` | Redis address | `redis:6379` |
 | `ACB_REDIS_PASS` | Redis password | (empty) |
 | `ACB_RUSTFS_ENDPOINT` | RustFS S3-compatible endpoint | `rustfs:9000` |

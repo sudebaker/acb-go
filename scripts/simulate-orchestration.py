@@ -89,6 +89,18 @@ def register_agent(name, agent_token, skills, admin_token):
     return False
 
 
+def register_agent_with_retry(name, token, skills, admin_token, max_retries=5):
+    """Register an agent with retry + backoff for rate limiting."""
+    for attempt in range(max_retries):
+        ok = register_agent(name, token, skills, admin_token)
+        if ok:
+            return True
+        wait = min(2 ** attempt, 8)
+        print(f"  [{name}] retrying in {wait}s...")
+        time.sleep(wait)
+    return False
+
+
 def simulate_agent(config, token):
     """Run a simulated agent lifecycle in a thread. Token is pre-assigned by admin."""
     name = config["name"]
@@ -230,7 +242,7 @@ def run_orchestrator():
     print(f"  Registering {AGENT_1['name']}...")
     a1_ok = register_agent(AGENT_1["name"], agent1_token, AGENT_1["skills"], ADMIN_TOKEN)
     print(f"  Registering {AGENT_2['name']}...")
-    a2_ok = register_agent(AGENT_2["name"], agent2_token, AGENT_2["skills"], ADMIN_TOKEN)
+    a2_ok = register_agent_with_retry(AGENT_2["name"], agent2_token, AGENT_2["skills"], ADMIN_TOKEN)
 
     print(f"  {AGENT_1['name']}: {'OK' if a1_ok else 'FAILED'}")
     print(f"  {AGENT_2['name']}: {'OK' if a2_ok else 'FAILED'}")
@@ -277,7 +289,7 @@ def run_orchestrator():
                 "assignee": None,
                 "actual_outcome": outcome,
             }
-        status_text = "created" if status == 200 else f"FAILED ({status})"
+        status_text = "created" if status in (200, 201) else f"FAILED ({status})"
         marker = " [GATE]" if tdef.get("gate") else ""
         print(f"  {i}. {tdef['title']}: {status_text}{marker}")
 
@@ -306,15 +318,23 @@ def run_orchestrator():
                         gate_id = report["tasks"][tid].get("gate_id", "")
                         if gate_id:
                             print(f"  Orchestrator answering gate {gate_id} for task {tid[:8]}...")
-                            sc, _ = acb_request(
+                            sc1, _ = acb_request(
                                 "POST", f"/tasks/{tid}/gates/{gate_id}/answer",
-                                ADMIN_TOKEN, {"answer": "Approved after review"}
+                                ADMIN_TOKEN, {"answer": "LGTM, approved"}
                             )
-                            if sc == 200:
-                                gate_answers_done.add(tid)
-                                print(f"  Gate {gate_id} answered (status: asked)")
+                            if sc1 in (200, 201):
+                                print(f"  Gate answer submitted (sc={sc1}), approving...")
+                                sc2, _ = acb_request(
+                                    "POST", f"/tasks/{tid}/gates/{gate_id}/approve",
+                                    ADMIN_TOKEN, {"answer": "Approved after review"}
+                                )
+                                if sc2 in (200, 201):
+                                    gate_answers_done.add(tid)
+                                    print(f"  Gate {gate_id} approved (sc={sc2})")
+                                else:
+                                    print(f"  Gate approve returned {sc2}")
                             else:
-                                print(f"  Gate answer returned {sc}")
+                                print(f"  Gate answer returned {sc1}")
 
                 # Count terminal tasks
                 for tid, info in report["tasks"].items():

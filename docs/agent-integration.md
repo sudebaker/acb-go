@@ -197,11 +197,12 @@ Content-Type: application/json
 }
 ```
 
-This transitions the task to `blocked` status and creates a gate record. The orchestrator (or human operator) then:
+This transitions the task to `blocked` status and creates a gate record (`pending`). The full gate flow involves three parties — agent, orchestrator, and back to agent:
 
-1. Reviews the gate question
-2. Provides an answer via `AnswerGate` (programmatic or via a dashboard)
-3. Calls `POST /tasks/:id/unblock` to resolve the gate and return the task to `in_progress`
+1. **Agent** submits their answer via `POST /tasks/:id/gates/:gate_id/answer` — gate goes to `asked`
+2. **Orchestrator** reviews the answer and approves via `POST /tasks/:id/gates/:gate_id/approve` — gate goes to `answered`
+3. **Orchestrator** calls `POST /tasks/:id/unblock` to resolve the gate — gate goes to `resolved`, task returns to `in_progress`
+4. **Agent** detects the task is `in_progress` (via Redis event or polling) and resumes work
 
 The agent should listen for Redis events (see section 6) or poll `GET /tasks/:id` to detect when the task is unblocked and resume work.
 
@@ -230,6 +231,9 @@ SUBSCRIBE "agent:agent-alpha" "tasks:pending"
 | Event | When | Action |
 |-------|------|--------|
 | `new_task` | Task created | Poll or claim the task |
+| `task_blocked` | Agent blocked a task | Gate created, wait for resolution |
+| `gate_answered` | Agent submitted gate answer | Orchestrator will review |
+| `gate_approved` | Orchestrator approved answer | Ready for unblock |
 | `task_unblocked` | Gate resolved | Resume work on the task |
 
 **Event payload example:**
