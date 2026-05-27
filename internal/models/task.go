@@ -26,11 +26,13 @@ type Task struct {
 }
 
 type TaskEvent struct {
+	ID        int64  `json:"id"`
 	TaskID    string `json:"task_id"`
 	Event     string `json:"event"`
 	Agent     string `json:"agent"`
 	Timestamp string `json:"timestamp"`
 	Detail    string `json:"detail,omitempty"`
+	Title     string `json:"title,omitempty"`
 }
 
 type Artifact struct {

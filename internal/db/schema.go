@@ -101,6 +101,13 @@ ALTER TABLE tasks ADD COLUMN IF NOT EXISTS retry_count INT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS idx_tasks_last_heartbeat ON tasks(last_heartbeat);
 `,
 		},
+		{
+			version: 3,
+			sql: `
+ALTER TABLE agents ADD COLUMN IF NOT EXISTS last_event_id BIGINT DEFAULT 0;
+CREATE INDEX IF NOT EXISTS idx_task_events_timestamp ON task_events(timestamp);
+`,
+		},
 	}
 
 	for _, m := range migrations {

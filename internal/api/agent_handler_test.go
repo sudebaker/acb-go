@@ -172,6 +172,109 @@ func TestRegisterAgent_Upsert(t *testing.T) {
 	}
 }
 
+func TestGetAgentCursor_200_NoCursor(t *testing.T) {
+	d := setupTestDB(t)
+	agentRepo := db.NewAgentRepo(d)
+	taskRepo := db.NewTaskRepo(d)
+	gateRepo := db.NewGateRepo(d)
+
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
+
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/agents/me/cursor", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	if resp["cursor"] != nil {
+		t.Errorf("expected null cursor, got %v", resp["cursor"])
+	}
+}
+
+func TestGetAgentCursor_200_WithCursor(t *testing.T) {
+	d := setupTestDB(t)
+	agentRepo := db.NewAgentRepo(d)
+	taskRepo := db.NewTaskRepo(d)
+	gateRepo := db.NewGateRepo(d)
+
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
+	agentRepo.UpdateLastEventID(context.Background(), "test-agent", 42)
+
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest("GET", "/agents/me/cursor", nil)
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]interface{}
+	json.NewDecoder(w.Body).Decode(&resp)
+	cursor, ok := resp["cursor"].(float64)
+	if !ok || int64(cursor) != 42 {
+		t.Errorf("expected cursor 42, got %v", resp["cursor"])
+	}
+}
+
+func TestUpdateAgentCursor_200(t *testing.T) {
+	d := setupTestDB(t)
+	agentRepo := db.NewAgentRepo(d)
+	taskRepo := db.NewTaskRepo(d)
+	gateRepo := db.NewGateRepo(d)
+
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
+
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
+
+	body := `{"cursor": 99}`
+	req := httptest.NewRequest("POST", "/agents/me/cursor", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	// Verify cursor was persisted
+	got, _ := agentRepo.GetLastEventID(context.Background(), "test-agent")
+	if got == nil || *got != 99 {
+		t.Errorf("expected cursor 99, got %v", got)
+	}
+}
+
+func TestUpdateAgentCursor_MissingCursor(t *testing.T) {
+	d := setupTestDB(t)
+	agentRepo := db.NewAgentRepo(d)
+	taskRepo := db.NewTaskRepo(d)
+	gateRepo := db.NewGateRepo(d)
+
+	agentRepo.UpsertAgent(context.Background(), &models.Agent{Name: "test-agent", Token: testToken})
+
+	r := NewRouter(taskRepo, gateRepo, agentRepo, nil, nil, nil, nil, nil, nil)
+
+	req := httptest.NewRequest("POST", "/agents/me/cursor", strings.NewReader(`{}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+testToken)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for missing cursor, got %d", w.Code)
+	}
+}
+
 func TestGetAgent_200(t *testing.T) {
 	d := setupTestDB(t)
 	agentRepo := db.NewAgentRepo(d)

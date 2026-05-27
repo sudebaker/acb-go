@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/go-chi/chi/v5"
@@ -15,6 +16,58 @@ type AgentHandler struct {
 	agentRepo *db.AgentRepo
 	limiter   *RateLimiter
 	cfg       *config.Config
+}
+
+// GetAgentCursor returns the last_event_id for the authenticated agent (from X-Agent-Name).
+func (h *AgentHandler) GetAgentCursor(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentName := r.Header.Get("X-Agent-Name")
+	if agentName == "" {
+		WriteError(w, 401, "unauthorized", "X-Agent-Name header is missing")
+		return
+	}
+
+	lastID, err := h.agentRepo.GetLastEventID(ctx, agentName)
+	if err != nil {
+		WriteError(w, 404, "agent_not_found", "agent not found")
+		return
+	}
+
+	resp := map[string]interface{}{"cursor": lastID}
+	WriteJSON(w, 200, resp)
+}
+
+// UpdateAgentCursor sets the last_event_id for the authenticated agent (from X-Agent-Name).
+func (h *AgentHandler) UpdateAgentCursor(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	agentName := r.Header.Get("X-Agent-Name")
+	if agentName == "" {
+		WriteError(w, 401, "unauthorized", "X-Agent-Name header is missing")
+		return
+	}
+
+	var input struct {
+		Cursor int64 `json:"cursor"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+		WriteError(w, 400, "invalid_json", "invalid request body")
+		return
+	}
+	if input.Cursor <= 0 {
+		WriteError(w, 400, "missing_cursor", "cursor must be a positive integer")
+		return
+	}
+
+	if err := h.agentRepo.UpdateLastEventID(ctx, agentName, input.Cursor); err != nil {
+		if errors.Is(err, db.ErrAgentNotFound) {
+			WriteError(w, 404, "agent_not_found", "agent not found")
+		} else {
+			WriteErrorSafe(w, 500, "update_cursor_failed", err)
+		}
+		return
+	}
+
+	WriteJSON(w, 200, map[string]string{"status": "ok"})
 }
 
 func (h *AgentHandler) Heartbeat(w http.ResponseWriter, r *http.Request) {

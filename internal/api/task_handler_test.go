@@ -444,6 +444,121 @@ func TestListTaskEvents_EmptyForNonexistent(t *testing.T) {
 	}
 }
 
+func TestListGlobalEvents_200(t *testing.T) {
+	_, r := setupRouter(t)
+	// Create a task first to generate some events
+	req := authRequest("POST", "/tasks", `{"id":"t-global-events","title":"global events test"}`)
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+	if w.Code != 201 {
+		t.Fatalf("create task: expected 201, got %d", w.Code)
+	}
+
+	// Now query global events
+	req = authRequest("GET", "/events?since=2020-01-01T00:00:00Z", "")
+	w = httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var events []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&events); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected at least one event")
+	}
+}
+
+func TestListGlobalEvents_MissingSince(t *testing.T) {
+	_, r := setupRouter(t)
+	req := authRequest("GET", "/events", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 400 {
+		t.Errorf("expected 400 for missing since, got %d", w.Code)
+	}
+}
+
+func TestListGlobalEvents_Empty(t *testing.T) {
+	_, r := setupRouter(t)
+	req := authRequest("GET", "/events?since=2099-01-01T00:00:00Z", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var events []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&events); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("expected empty events array, got %d items", len(events))
+	}
+}
+
+func TestListGlobalEvents_FilterByAgent(t *testing.T) {
+	d, r := setupRouter(t)
+	taskRepo := db.NewTaskRepo(d)
+
+	// Create a task
+	taskRepo.Create(context.Background(), &models.Task{ID: "t-agent-filter", Title: "agent filter test"})
+	taskRepo.ClaimTask(context.Background(), "t-agent-filter", "agent-alpha")
+	taskRepo.StartTask(context.Background(), "t-agent-filter")
+
+	// Query filtered by agent
+	req := authRequest("GET", "/events?since=2020-01-01T00:00:00Z&agent=agent-alpha", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var events []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&events); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	if len(events) == 0 {
+		t.Fatal("expected at least one event for agent-alpha")
+	}
+}
+
+func TestListGlobalEvents_WithLimit(t *testing.T) {
+	_, r := setupRouter(t)
+	// Create multiple tasks to generate multiple events
+	for i := 0; i < 5; i++ {
+		req := authRequest("POST", "/tasks", fmt.Sprintf(`{"id":"t-limit-%d","title":"limit test %d"}`, i, i))
+		w := httptest.NewRecorder()
+		r.ServeHTTP(w, req)
+		if w.Code != 201 {
+			t.Fatalf("create task %d: expected 201, got %d", i, w.Code)
+		}
+	}
+
+	// Query with limit=2
+	req := authRequest("GET", "/events?since=2020-01-01T00:00:00Z&limit=2", "")
+	w := httptest.NewRecorder()
+	r.ServeHTTP(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var events []map[string]interface{}
+	if err := json.NewDecoder(w.Body).Decode(&events); err != nil {
+		t.Fatalf("decode events: %v", err)
+	}
+	if len(events) > 2 {
+		t.Errorf("expected at most 2 events with limit=2, got %d", len(events))
+	}
+}
+
 func TestListTaskGates_200(t *testing.T) {
 	d, r := setupRouter(t)
 	gateRepo := db.NewGateRepo(d)

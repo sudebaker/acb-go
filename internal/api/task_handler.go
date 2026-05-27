@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/sudebaker/acb-go/internal/config"
@@ -671,6 +672,53 @@ func (h *TaskHandler) DispatchNext(w http.ResponseWriter, r *http.Request) {
 	}
 
 	WriteJSON(w, 200, task)
+}
+
+// ListGlobalEvents returns task events, filtered by agent and since/after_id.
+// GET /events?after_id=123&agent=braulio&limit=50
+// GET /events?since=ISO8601&agent=braulio&limit=50
+func (h *TaskHandler) ListGlobalEvents(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	q := r.URL.Query()
+
+	since := q.Get("since")
+	agent := q.Get("agent")
+
+	limit := 50
+	if l := q.Get("limit"); l != "" {
+		if parsed, err := strconv.Atoi(l); err == nil && parsed > 0 && parsed <= 200 {
+			limit = parsed
+		}
+	}
+
+	// after_id takes precedence over since
+	var afterID int64
+	var useID bool
+	if aid, ok := q["after_id"]; ok && len(aid) > 0 && aid[0] != "" {
+		useID = true
+		parsed, err := strconv.ParseInt(aid[0], 10, 64)
+		if err != nil || parsed < 0 {
+			WriteError(w, 400, "invalid_after_id", "after_id must be a non-negative integer")
+			return
+		}
+		afterID = parsed
+	}
+
+	if !useID && since == "" {
+		WriteError(w, 400, "missing_since_or_after_id", "since (ISO8601) or after_id (int) is required")
+		return
+	}
+
+	events, err := h.taskRepo.ListTaskEventsSince(ctx, since, agent, limit, afterID, useID)
+	if err != nil {
+		WriteErrorSafe(w, 500, "list_events_failed", err)
+		return
+	}
+	if events == nil {
+		events = []models.TaskEvent{}
+	}
+
+	WriteJSON(w, 200, events)
 }
 
 // ApproveGate transitions a gate from "asked" to "answered" (orchestrator approves the agent's answer).

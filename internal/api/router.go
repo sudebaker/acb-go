@@ -30,24 +30,29 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 	hh := NewHealthHandler(database, rdb, rustfsClient)
 	r.Get("/health", hh.Check)
 
-	if taskRepo != nil && gateRepo != nil {
+	if taskRepo != nil {
 		h := &TaskHandler{taskRepo: taskRepo, gateRepo: gateRepo, agentRepo: agentRepo, pub: pub, dispatcher: disp, cfg: cfg}
-		r.Post("/tasks", h.CreateTask)
-		r.Get("/tasks", h.ListTasks)
+		r.Get("/events", h.ListGlobalEvents)
+
 		r.Get("/tasks/dispatch", h.DispatchNext)
-		r.Get("/tasks/{id}", h.GetTask)
-		r.Post("/tasks/{id}/claim", h.ClaimTask)
-		r.Post("/tasks/{id}/start", h.StartTask)
-		r.Post("/tasks/{id}/block", h.BlockTask)
-		r.Post("/tasks/{id}/unblock", h.UnblockTask)
-		r.Post("/tasks/{id}/complete", h.CompleteTask)
-		r.Post("/tasks/{id}/fail", h.FailTask)
-		r.Post("/tasks/{id}/heartbeat", h.TaskHeartbeat)
-		r.Get("/tasks/{id}/events", h.ListTaskEvents)
-		r.Get("/tasks/{id}/graph", h.TaskGraph)
-		r.Post("/tasks/{id}/gates/{gate_id}/answer", h.AnswerGate)
-		r.Post("/tasks/{id}/gates/{gate_id}/approve", h.ApproveGate)
-		r.Get("/tasks/{id}/gates", h.ListTaskGates)
+
+		if gateRepo != nil {
+			r.Post("/tasks", h.CreateTask)
+			r.Get("/tasks", h.ListTasks)
+			r.Get("/tasks/{id}", h.GetTask)
+			r.Post("/tasks/{id}/claim", h.ClaimTask)
+			r.Post("/tasks/{id}/start", h.StartTask)
+			r.Post("/tasks/{id}/block", h.BlockTask)
+			r.Post("/tasks/{id}/unblock", h.UnblockTask)
+			r.Post("/tasks/{id}/complete", h.CompleteTask)
+			r.Post("/tasks/{id}/fail", h.FailTask)
+			r.Post("/tasks/{id}/heartbeat", h.TaskHeartbeat)
+			r.Get("/tasks/{id}/events", h.ListTaskEvents)
+			r.Get("/tasks/{id}/graph", h.TaskGraph)
+			r.Post("/tasks/{id}/gates/{gate_id}/answer", h.AnswerGate)
+			r.Post("/tasks/{id}/gates/{gate_id}/approve", h.ApproveGate)
+			r.Get("/tasks/{id}/gates", h.ListTaskGates)
+		}
 	}
 
 	if taskRepo != nil && agentRepo != nil {
@@ -73,6 +78,8 @@ func NewRouter(taskRepo *db.TaskRepo, gateRepo *db.GateRepo, agentRepo *db.Agent
 		r.Post("/agents", ah.RegisterAgent)
 		r.Post("/agents/heartbeat", ah.Heartbeat)
 		r.Get("/agents/{name}", ah.GetAgent)
+		r.Get("/agents/me/cursor", ah.GetAgentCursor)
+		r.Post("/agents/me/cursor", ah.UpdateAgentCursor)
 	}
 
 	return r

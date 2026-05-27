@@ -4,11 +4,14 @@ import (
 	"database/sql"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/sudebaker/acb-go/internal/models"
 )
+
+var ErrAgentNotFound = errors.New("agent not found")
 
 type AgentRepo struct {
 	db *sql.DB
@@ -96,7 +99,7 @@ func (r *AgentRepo) UpdateHeartbeat(ctx context.Context, name string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("agent %s not found", name)
+		return fmt.Errorf("%w: %s", ErrAgentNotFound, name)
 	}
 	return nil
 }
@@ -236,6 +239,41 @@ func (r *AgentRepo) HasRequiredSkills(ctx context.Context, agentName string, req
 		}
 	}
 	return true, nil
+}
+
+// GetLastEventID returns the last_event_id for an agent (highest processed event ID).
+// Returns nil if never set (first run).
+func (r *AgentRepo) GetLastEventID(ctx context.Context, name string) (*int64, error) {
+	var id sql.NullInt64
+	err := r.db.QueryRowContext(ctx,
+		`SELECT last_event_id FROM agents WHERE name = $1`, name,
+	).Scan(&id)
+	if err == sql.ErrNoRows {
+		return nil, fmt.Errorf("agent %s not found", name)
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get last event id: %w", err)
+	}
+	if id.Valid {
+		return &id.Int64, nil
+	}
+	return nil, nil
+}
+
+// UpdateLastEventID sets the last_event_id for an agent.
+func (r *AgentRepo) UpdateLastEventID(ctx context.Context, name string, id int64) error {
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE agents SET last_event_id = $1 WHERE name = $2`,
+		id, name,
+	)
+	if err != nil {
+		return fmt.Errorf("update last event id: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return fmt.Errorf("%w: %s", ErrAgentNotFound, name)
+	}
+	return nil
 }
 
 // FindMatchingAgents returns all agents whose skills include ALL of the requiredSkills.

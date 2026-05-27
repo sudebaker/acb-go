@@ -261,6 +261,67 @@ func TestUpsertAgentWithWebhook(t *testing.T) {
 	}
 }
 
+func TestGetLastEventID_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAgentRepo(db)
+
+	id, err := repo.GetLastEventID(context.Background(), "nonexistent")
+	if err == nil {
+		t.Error("expected error for nonexistent agent")
+	}
+	if id != nil {
+		t.Errorf("expected nil, got %v", id)
+	}
+}
+
+func TestGetLastEventID_Null(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAgentRepo(db)
+
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_123"})
+
+	id, err := repo.GetLastEventID(context.Background(), "agent-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if id != nil {
+		t.Errorf("expected nil (not set), got %d", *id)
+	}
+}
+
+func TestGetAndUpdateLastEventID(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAgentRepo(db)
+
+	repo.UpsertAgent(context.Background(), &models.Agent{Name: "agent-alpha", Port: 8081, Token: "tok_123"})
+
+	want := int64(42)
+	if err := repo.UpdateLastEventID(context.Background(), "agent-alpha", want); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetLastEventID(context.Background(), "agent-alpha")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil {
+		t.Fatal("expected non-nil id")
+	}
+	if *got != want {
+		t.Errorf("expected id %d, got %d", want, *got)
+	}
+}
+
+func TestUpdateLastEventID_NotFound(t *testing.T) {
+	db := setupTestDB(t)
+	repo := NewAgentRepo(db)
+
+	err := repo.UpdateLastEventID(context.Background(), "nonexistent", 42)
+	if err == nil {
+		t.Error("expected error for nonexistent agent")
+	}
+}
+
 func TestFindMatchingAgents(t *testing.T) {
 	db := setupTestDB(t)
 	repo := NewAgentRepo(db)

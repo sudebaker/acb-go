@@ -849,6 +849,15 @@ func (r *TaskRepo) ListTaskEvents(ctx context.Context, taskID string) ([]models.
 	return r.eventRepo.ListByTask(ctx, taskID)
 }
 
+// ListTaskEventsSince returns task events, filtered by agent.
+// When useID is true, uses ID-based cursor (afterID). Otherwise uses timestamp-based cursor (since).
+func (r *TaskRepo) ListTaskEventsSince(ctx context.Context, since, agent string, limit int, afterID int64, useID bool) ([]models.TaskEvent, error) {
+	if r.eventRepo == nil {
+		return nil, fmt.Errorf("event repo not initialized")
+	}
+	return r.eventRepo.ListSince(ctx, since, agent, limit, afterID, useID)
+}
+
 // logTaskEvent registers an event for a task transition
 func (r *TaskRepo) logTaskEvent(ctx context.Context, taskID, event, agent, detail string) {
 	if r.eventRepo != nil {
